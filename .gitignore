@@ -1,0 +1,16 @@
+node_modules/
+.next/
+.next_es/
+out/
+build/
+.wrangler/
+.dev.vars
+*.log
+npm-debug.log*
+.DS_Store
+.env
+.env.local
+tsconfig.tsbuildinfo
+next-env.d.ts
+repomap.md
+.hermes/

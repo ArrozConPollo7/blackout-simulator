@@ -1,0 +1,45 @@
+{
+  "name": "blackout-simulator",
+  "version": "5.0.0",
+  "private": true,
+  "description": "BLACKOUT: GRID COLLAPSE — simulador multijugador de crisis eléctrica para aula (proyector + mandos por mesa)",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node server.js",
+    "build": "next build",
+    "start": "NODE_ENV=production node server.js",
+    "build:static": "BUILD_TARGET=static next build",
+    "worker:dev": "npm run build:static && wrangler dev",
+    "worker:deploy": "npm run build:static && wrangler deploy",
+    "worker:tail": "wrangler tail",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test tests/engine.test.js tests/e2e.test.js",
+    "test:engine": "node --test tests/engine.test.js",
+    "test:worker": "node --test tests/worker.e2e.test.js"
+  },
+  "dependencies": {
+    "canvas-confetti": "^1.9.4",
+    "next": "^14.2.21",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/canvas-confetti": "^1.9.0",
+    "@types/node": "^20.17.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/ws": "^8.5.13",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.6.3",
+    "wrangler": "^4.0.0"
+  },
+  "allowScripts": {
+    "workerd@1.20260916.1": true,
+    "esbuild@0.28.1": true
+  }
+}
