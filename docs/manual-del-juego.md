@@ -453,7 +453,15 @@ de Cloudflare, se añade un *Custom Domain* en el dashboard (Worker → *Setting
 ```
 
 y se vuelve a desplegar (`npm run worker:deploy`). El certificado TLS es automático y el `workers.dev` sigue
-funcionando en paralelo. Redesplegar no pierde la partida en curso: el estado vive en el Durable Object.
+funcionando en paralelo.
+
+Si el dominio está en **Namecheap**, el Custom Domain exige la zona en Cloudflare, así que hay que mover los
+nameservers (el dominio sigue en Namecheap): *Cloudflare → Add a site → plan Free* para obtener los dos
+nameservers; *Domain List → Manage → Advanced DNS* → desactivar **DNSSEC** si está activo; *Domain List → Manage →
+Nameservers* → **Custom DNS** → pegar los dos y guardar. Cuando la zona quede *Active*, el paso 2 de arriba ya
+funciona sin tocar DNS ni certificados. Sin mover nameservers queda la vía de un **URL Redirect Record** en el DNS
+de Namecheap apuntando a `https://blackout-grid-collapse.<subdominio>.workers.dev/` (301, ~30 min): sirve para la
+clase, pero el navegador termina mostrando la URL `workers.dev`. Redesplegar no pierde la partida en curso: el estado vive en el Durable Object.
 
 ### Opción B — LAN sin internet (servidor Node)
 

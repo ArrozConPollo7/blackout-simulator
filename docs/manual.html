@@ -793,7 +793,14 @@ npm run worker:deploy                 # 2º compila la interfaz estática y publ
 &quot;routes&quot;: [{ &quot;pattern&quot;: &quot;juego.tudominio.com&quot;, &quot;custom_domain&quot;: true }]
 </code></pre>
 <p>y se vuelve a desplegar (<code>npm run worker:deploy</code>). El certificado TLS es automático y el <code>workers.dev</code> sigue</p>
-<p>funcionando en paralelo. Redesplegar no pierde la partida en curso: el estado vive en el Durable Object.</p>
+<p>funcionando en paralelo.</p>
+<p>Si el dominio está en <strong>Namecheap</strong>, el Custom Domain exige la zona en Cloudflare, así que hay que mover los</p>
+<p>nameservers (el dominio sigue en Namecheap): <em>Cloudflare → Add a site → plan Free</em> para obtener los dos</p>
+<p>nameservers; <em>Domain List → Manage → Advanced DNS</em> → desactivar <strong>DNSSEC</strong> si está activo; *Domain List → Manage →</p>
+<p>Nameservers<em> → <strong>Custom DNS</strong> → pegar los dos y guardar. Cuando la zona quede </em>Active*, el paso 2 de arriba ya</p>
+<p>funciona sin tocar DNS ni certificados. Sin mover nameservers queda la vía de un <strong>URL Redirect Record</strong> en el DNS</p>
+<p>de Namecheap apuntando a <code>https://blackout-grid-collapse.&lt;subdominio&gt;.workers.dev/</code> (301, ~30 min): sirve para la</p>
+<p>clase, pero el navegador termina mostrando la URL <code>workers.dev</code>. Redesplegar no pierde la partida en curso: el estado vive en el Durable Object.</p>
 <h3 id="opción-b--lan-sin-internet-servidor-node">Opción B — LAN sin internet (servidor Node)</h3>
 <pre><code>
 npm install          # una vez

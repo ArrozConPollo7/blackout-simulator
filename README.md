@@ -84,6 +84,26 @@ Es decir, **no hay que tocar código**: basta con atar el Worker al dominio.
 
    y después `npm run worker:deploy`. El certificado TLS lo emite Cloudflare solo (Universal SSL), sin costo extra.
 
+#### Si el dominio está en Namecheap
+
+Cloudflare crea los registros DNS y el certificado, pero el Custom Domain tiene que estar en una **zona de tu
+cuenta de Cloudflare**, así que hay que mover los nameservers (el dominio sigue siendo tuyo en Namecheap):
+
+1. Cloudflare → *Add a site* → `tudominio.com` → plan **Free** → apunta los dos nameservers que te da (ej.
+   `dana.ns.cloudflare.com`, `rob.ns.cloudflare.com`).
+2. Antes de cambiarlos: en Namecheap *Domain List → Manage → Advanced DNS → DNSSEC*, **desactiva DNSSEC** si está
+   activo (con DNSSEC y nameservers nuevos la zona no resuelve).
+3. Namecheap *Domain List → Manage* → sección **Nameservers** → elige **Custom DNS** → pega los dos y guarda con
+   el check verde. Cloudflare avisa por correo cuando la zona está *Active* (minutos; hasta 24-48 h en el peor caso).
+4. Con la zona activa: Worker → *Settings → Domains & Routes → Add → Custom Domain* → `juego.tudominio.com`.
+   No hay que crear registros DNS a mano ni gestionar certificados.
+
+**Alternativa sin mover nameservers:** en Namecheap, *Advanced DNS* → *Add New Record* → **URL Redirect Record**
+(host `juego`) → destino `https://blackout-grid-collapse.<tu-subdominio>.workers.dev/`, tipo **301 Permanent**.
+Funciona con BasicDNS y tarda ~30 min, pero el navegador acaba mostrando la URL `workers.dev` (el juego no se
+rompe: deriva todo del origen actual). Evita el modo *Masked*: el juego dentro de un iframe complica el audio y la
+pantalla completa.
+
 El `workers.dev` sigue funcionando en paralelo (mismo Worker, dos puertas). Redesplegar no pierde partidas en
 curso: el estado vive en el Durable Object de cada sala. Si el dominio está en otro proveedor de DNS y no quieres
 mover la zona, la alternativa es un CNAME a `<worker>.<subdominio>.workers.dev`, pero ahí el certificado y el
