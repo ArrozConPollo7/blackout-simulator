@@ -14,6 +14,7 @@ import {
   SectorKey,
   MAX_WELFARE,
   MAX_BLACKOUTS,
+  incidentTags,
   versionLabel,
 } from "@/lib/types";
 
@@ -469,13 +470,53 @@ export default function DistrictControllerPage() {
           </div>
         </div>
 
+        {/* Incidentes aleatorios de la ronda */}
+        {(roomState?.incidents?.length ?? 0) > 0 && (
+          <div className="flex flex-col gap-2">
+            {(roomState?.incidents || []).map((incident) => (
+              <div
+                key={incident.id}
+                className="bg-surface-container-lowest border border-warning-amber/60 rounded-lg p-2.5 flex flex-col gap-1"
+              >
+                <span className="flex items-center gap-1.5 font-data text-[10px] text-warning-amber font-bold uppercase tracking-widest">
+                  <span className="material-symbols-outlined text-[14px] animate-pulse">bolt</span>
+                  INCIDENTE // {incident.tagline}
+                </span>
+                <span className="font-headline text-sm text-on-surface font-bold uppercase tracking-tight leading-tight">
+                  {incident.name}
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  {incidentTags(incident).map((tag) => (
+                    <span
+                      key={tag}
+                      className="font-data text-[9px] bg-warning-amber/10 text-warning-amber border border-warning-amber/40 px-1.5 py-0.5 rounded uppercase font-bold"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Palancas */}
         <div className="flex items-center justify-between px-1">
           <h3 className="font-data text-xs uppercase tracking-wider text-on-surface font-bold">
             Sectores de bus de alimentación
           </h3>
-          <span className="font-data text-[10px] text-on-surface-variant tracking-widest">
-            {roomState?.phase === "GAME_OVER" ? "BLOQUEADO" : "EN VIVO"}
+          <span
+            className={`font-data text-[10px] tracking-widest ${
+              SECTOR_ORDER.some((key) => roomState?.lockedSectors?.[key])
+                ? "text-warning-amber font-bold"
+                : "text-on-surface-variant"
+            }`}
+          >
+            {roomState?.phase === "GAME_OVER"
+              ? "BLOQUEADO"
+              : SECTOR_ORDER.some((key) => roomState?.lockedSectors?.[key])
+              ? "PALANCAS BLOQUEADAS POR INCIDENTE"
+              : "EN VIVO"}
           </span>
         </div>
 
@@ -485,7 +526,7 @@ export default function DistrictControllerPage() {
               key={key}
               spec={SECTOR_SPECS[key]}
               isActive={myTeam.sectors[key]}
-              disabled={roomState?.phase === "GAME_OVER"}
+              disabled={roomState?.phase === "GAME_OVER" || Boolean(roomState?.lockedSectors?.[key])}
               onToggle={(state) => handleToggleSector(key, state)}
               onScreenShake={triggerSnapShake}
             />

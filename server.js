@@ -27,6 +27,9 @@ const ROOM_TTL_MS = 6 * 60 * 60 * 1000; // salas abandonadas
 /** Duraciones del ciclo de ronda: por defecto las del documento (10 s + 60 s). */
 const ANNOUNCE_SECONDS = intEnv("ANNOUNCE_SECONDS", rules.ANNOUNCE_SECONDS);
 const NEGOTIATION_SECONDS = intEnv("NEGOTIATION_SECONDS", rules.NEGOTIATION_SECONDS);
+/** Semilla fija opcional (repetir una partida) y respaldo para apagar incidentes. */
+const GAME_SEED = intEnv("GAME_SEED", 0) || undefined;
+const INCIDENTS_ENABLED = String(process.env.INCIDENTS || "on").toLowerCase() !== "off";
 
 function intEnv(name, fallback) {
   const parsed = parseInt(process.env[name], 10);
@@ -34,7 +37,7 @@ function intEnv(name, fallback) {
 }
 
 function makeRoom(pin) {
-  const room = rules.createRoom(pin);
+  const room = rules.createRoom(pin, { seed: GAME_SEED, incidents: INCIDENTS_ENABLED });
   room.announceSeconds = ANNOUNCE_SECONDS;
   room.negotiationSeconds = NEGOTIATION_SECONDS;
   room.lastActivity = Date.now();
@@ -114,7 +117,7 @@ function refreshDerived(room) {
   // los distritos que reserva el anfitrión. Una vez anunciada la crisis, el
   // techo queda congelado para toda la ronda.
   if (room.phase === "LOBBY" || room.phase === "GAME_OVER") {
-    room.capacity = rules.regionalCapacity(rules.districtCount(room), room.activeCrisis);
+    room.capacity = rules.regionalCapacity(rules.districtCount(room), room.activeCrisis, room.incidents);
   }
   rules.recomputeDerived(room);
   return room.demand;
@@ -291,6 +294,7 @@ function handleMessage(ws, msg) {
       }
       const crisis = rules.startRound(room, 1);
       addLog(room, "ALERT", `RONDA 01 INICIADA // ${crisis.name} // ANUNCIO EN ${room.announceSeconds}s`);
+      for (const line of rules.incidentLogLines(room)) addLog(room, line.type, line.message);
       refreshDerived(room);
       broadcastRoom(room.pin);
       return;
@@ -326,6 +330,7 @@ function handleMessage(ws, msg) {
         if (room.currentRound < room.totalRounds) {
           const crisis = rules.startRound(room, room.currentRound + 1);
           addLog(room, "ALERT", `RONDA 0${room.currentRound} INICIADA // ${crisis.name}`);
+          for (const line of rules.incidentLogLines(room)) addLog(room, line.type, line.message);
         } else {
           room.finalResults = rules.finalResults(room, { irreversible: false });
           room.phase = "GAME_OVER";
@@ -365,6 +370,13 @@ function handleMessage(ws, msg) {
       const team = room.teams[msg.teamId];
       if (!team || !rules.SECTOR_SPECS[msg.sector]) return;
       if (room.phase === "GAME_OVER") return;
+      if (rules.isSectorLocked(room, msg.sector)) {
+        send(ws, {
+          type: "ERROR",
+          message: `PALANCA BLOQUEADA POR INCIDENTE: ${rules.SECTOR_SPECS[msg.sector].label}`,
+        });
+        return;
+      }
       team.sectors[msg.sector] = !!msg.state;
       addLog(
         room,
@@ -497,6 +509,13 @@ function handleMessage(ws, msg) {
         send(ws, { type: "ERROR", message: "SIMULACIÓN CERRADA // RED IRRECUPERABLE" });
         return;
       }
+      if (rules.isSectorLocked(room, msg.sector)) {
+        send(ws, {
+          type: "ERROR",
+          message: `${spec.label} BLOQUEADA POR INCIDENTE // NO SE PUEDE CORTAR ESTA RONDA`,
+        });
+        return;
+      }
       team.sectors[msg.sector] = !!msg.state;
       addLog(room, "TEAM", `${team.name}: ${spec.label} ${msg.state ? "ENCENDIDA" : "APAGADA"}`);
       refreshDerived(room);
@@ -509,6 +528,9 @@ function handleMessage(ws, msg) {
       if (!room || !team) return;
       if (room.phase === "GAME_OVER") return;
       team.sectors = rules.emptySectors(false);
+      for (const key of rules.SECTOR_ORDER) {
+        if (rules.isSectorLocked(room, key)) team.sectors[key] = true;
+      }
       addLog(room, "ALERT", `¡CORTE TOTAL DE EMERGENCIA EN ${team.name}! TODOS LOS ALIMENTADORES ABIERTOS`);
       refreshDerived(room);
       broadcastRoom(room.pin);
@@ -542,6 +564,9 @@ app.prepare().then(() => {
             round: r.currentRound,
             teams: Object.keys(r.teams).length,
             blackouts: r.blackoutCount,
+            seed: r.seed,
+            incidents: (r.incidents || []).map((i) => i.id),
+            locked: Object.keys(r.lockedSectors || {}).filter((k) => r.lockedSectors[k]),
           })),
         })
       );

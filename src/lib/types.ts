@@ -8,6 +8,8 @@ import {
   SECTOR_ORDER as RAW_SECTOR_ORDER,
   DISTRICTS as RAW_DISTRICTS,
   CRISIS_PRESETS as RAW_CRISIS_PRESETS,
+  INCIDENT_POOL as RAW_INCIDENT_POOL,
+  incidentTags as RAW_INCIDENT_TAGS,
   VERSION as RAW_VERSION,
   BASE_DEMAND_MW_PER_DISTRICT as RAW_BASE_MW,
   BASE_DEMAND_GAS_PER_DISTRICT as RAW_BASE_GAS,
@@ -81,6 +83,9 @@ export interface Capacity {
   districts: number;
   baseMW: number;
   baseGas: number;
+  /** Multiplicador combinado (crisis x incidentes) que ve el proyector. */
+  electricMultiplier: number;
+  gasMultiplier: number;
   maxMW: number;
   maxGas: number;
 }
@@ -103,6 +108,40 @@ export interface CrisisEvent {
   hexCode: string;
   icon: string;
   objective: string;
+}
+
+export type IncidentFamily = "capacity" | "demand" | "economy" | "lock" | "boost";
+
+export interface IncidentEffects {
+  electricMultiplier: number;
+  gasMultiplier: number;
+  demand: { industry: number; residential: number; critical: number };
+  welfareAll: number;
+  budgetAll: number;
+  blackoutWelfareExtra: number;
+  blackoutBudgetExtra: number;
+  stableWelfareBonus: number;
+  stableBudgetBonus: number;
+  industryRevenueBonus: number;
+  lockSectors: SectorKey[];
+}
+
+/**
+ * Incidente aleatorio: se sortea sobre la crisis de la ronda. `effects` es
+ * parcial; el motor lo normaliza (lo ausente vale neutro).
+ */
+export interface IncidentEvent {
+  id: string;
+  family: IncidentFamily;
+  severity: 1 | 2 | 3;
+  minRound: number;
+  name: string;
+  tagline: string;
+  icon: string;
+  hexCode: string;
+  description: string;
+  objective: string;
+  effects: Partial<IncidentEffects>;
 }
 
 export interface LogEntry {
@@ -145,6 +184,9 @@ export interface ResolutionData {
   marginGas: number;
   blackoutCount: number;
   irreversible: boolean;
+  /** Incidentes que estaban vigentes cuando se resolvió la ronda. */
+  incidents: { id: string; name: string }[];
+  lockedSectors: SectorsState;
   teamResults: TeamResolution[];
 }
 
@@ -165,6 +207,8 @@ export interface FinalResults {
   irreversible: boolean;
   blackoutCount: number;
   roundsPlayed: number;
+  seed: number;
+  incidentsPlayed: string[];
   ranking: FinalRankingEntry[];
   mentions: { exemplary: string | null; martyr: string | null; parasite: string | null };
 }
@@ -181,6 +225,15 @@ export interface RoomState {
   deadlineTs: number | null;
   timerRunning: boolean;
   activeCrisis: CrisisEvent | null;
+  /** Semilla del sorteo: dos salas con la misma semilla juegan el mismo guion. */
+  seed: number;
+  /** false = partida con la aritmética del documento, sin incidentes. */
+  incidentsEnabled: boolean;
+  /** Incidentes sorteados para la ronda vigente (vacío en el vestíbulo). */
+  incidents: IncidentEvent[];
+  usedIncidentIds: string[];
+  /** Palancas que un incidente impide cortar en esta ronda. */
+  lockedSectors: SectorsState;
   capacity: Capacity;
   demand: Demand;
   blackoutCount: number;
@@ -222,6 +275,9 @@ export const SECTOR_ORDER = RAW_SECTOR_ORDER as SectorKey[];
 export const SECTOR_SPECS = RAW_SECTOR_SPECS as Record<SectorKey, SectorSpec>;
 export const DISTRICTS = RAW_DISTRICTS as DistrictInfo[];
 export const CRISIS_PRESETS = RAW_CRISIS_PRESETS as CrisisEvent[];
+export const INCIDENT_POOL = RAW_INCIDENT_POOL as IncidentEvent[];
+/** Etiquetas cortas de un incidente (las genera el motor, no la vista). */
+export const incidentTags = RAW_INCIDENT_TAGS as (incident: IncidentEvent) => string[];
 export const BASE_DEMAND_MW_PER_DISTRICT = RAW_BASE_MW as number;
 export const BASE_DEMAND_GAS_PER_DISTRICT = RAW_BASE_GAS as number;
 

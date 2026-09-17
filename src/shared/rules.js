@@ -18,7 +18,7 @@
  *  - PEF = Bienestar final + (Tesorería final / 100).
  */
 
-const VERSION = "5.0";
+const VERSION = "5.1";
 
 /** @typedef {"industry" | "residential" | "critical"} SectorKey */
 /** @typedef {"LOBBY" | "CRISIS_ANNOUNCE" | "CRISIS_ACTIVE" | "RESOLUTION" | "GAME_OVER"} GamePhase */
@@ -176,6 +176,483 @@ const CRISIS_PRESETS = [
 ];
 
 // ---------------------------------------------------------------------------
+// Incidentes aleatorios (variación de ronda)
+// ---------------------------------------------------------------------------
+/**
+ * Sobre la crisis de la ronda se sortean INCIDENTES: sucesos que alteran el
+ * techo de la red, la demanda, la economía o el propio mando de las mesas.
+ *
+ * Reglas del sorteo (ver `drawIncidents`):
+ *  - Ronda 1 (tutorial): sin incidentes. La aritmética del documento se
+ *    presenta limpia antes de empezar a torcerla.
+ *  - Ronda 2 y 3: 1 incidente, severidad máxima 2 y 3 respectivamente.
+ *  - Ronda 4: 2 incidentes (el final es el más caótico), severidad máxima 3,
+ *    de familias distintas.
+ *  - Un incidente nunca se repite dentro de la misma partida.
+ *  - El sorteo es determinista para una semilla dada (`room.seed`), así que una
+ *    partida se puede reproducir; con otra semilla cambia todo el guion.
+ *
+ * Familias: `capacity` (techo), `demand` (consumo), `economy` (dinero y
+ * bienestar), `lock` (sectores que no se pueden cortar) y `boost` (alivio).
+ *
+ * Invariante de balance: ninguna combinación de incidentes puede hacer la ronda
+ * irresoluble (siempre se puede salvar cortando industria y residencial) ni
+ * convertir en ganador al que no toca nada (el techo sigue por debajo de la
+ * demanda base). Hay una prueba que lo verifica por fuerza bruta.
+ */
+const INCIDENT_POOL = [
+  // -- capacity: recortan el techo regional ---------------------------------
+  {
+    id: "inc-valvula",
+    family: "capacity",
+    severity: 2,
+    minRound: 2,
+    name: "FUGA EN LA LÍNEA DE DISTRIBUCIÓN",
+    tagline: "TECHO DE GAS RECORTADO",
+    icon: "leak",
+    hexCode: "0xA31_GAS // FUGA_10",
+    description:
+      "Una junta del anillo de distribución revienta: la red pierde un 10% de capacidad de gas durante la ronda.",
+    objective: "El gas vuelve a ser el cuello de botella.",
+    effects: { gasMultiplier: 0.9 },
+  },
+  {
+    id: "inc-torre",
+    family: "capacity",
+    severity: 2,
+    minRound: 2,
+    name: "TORRE DE ENFRIAMIENTO AL 70%",
+    tagline: "TECHO ELÉCTRICO RECORTADO",
+    icon: "device_thermostat",
+    hexCode: "0xB42_TERMICA // TORRE_70",
+    description:
+      "El circuito secundario de refrigeración pierde caudal: el parque generador entrega un 10% menos de potencia.",
+    objective: "Hay que ceder más MW de los previstos.",
+    effects: { electricMultiplier: 0.9 },
+  },
+  {
+    id: "inc-turbina",
+    family: "capacity",
+    severity: 3,
+    minRound: 3,
+    name: "TURBINA 3 FUERA DE SERVICIO",
+    tagline: "PÉRDIDA SEVERA DE MW",
+    icon: "settings_input_component",
+    hexCode: "0xC53_TURBINA // TRIP_15",
+    description:
+      "Disparo de la turbina 3 por sobrevelocidad: se pierde un 15% de la capacidad eléctrica de la región.",
+    objective: "La reserva girante se agota: cada MW cuenta.",
+    effects: { electricMultiplier: 0.85 },
+  },
+  {
+    id: "inc-compresor",
+    family: "capacity",
+    severity: 3,
+    minRound: 3,
+    name: "COMPRESOR TRONCAL EN PARADA",
+    tagline: "PÉRDIDA SEVERA DE GAS",
+    icon: "compress",
+    hexCode: "0xD64_COMPRESOR // STOP_15",
+    description:
+      "El compresor troncal entra en parada de seguridad: la capacidad de gas de la región cae un 15%.",
+    objective: "Sin gas, las calderas y los hornos se apagan.",
+    effects: { gasMultiplier: 0.85 },
+  },
+  {
+    id: "inc-anillo",
+    family: "capacity",
+    severity: 2,
+    minRound: 2,
+    name: "ROBO DE CABLE EN EL ANILLO SUR",
+    tagline: "TECHO RECORTADO Y COSTO EXTRA",
+    icon: "cable",
+    hexCode: "0xE75_ANILLO // CABLE_8",
+    description:
+      "Desmantelan 4 km de línea del anillo sur: se pierde un 8% de capacidad eléctrica y la reparación cuesta $200 a cada distrito.",
+    objective: "Reparar cuesta dinero; no reparar cuesta la red.",
+    effects: { electricMultiplier: 0.92, budgetAll: -200 },
+  },
+
+  // -- demand: suben el consumo ---------------------------------------------
+  {
+    id: "inc-calor",
+    family: "demand",
+    severity: 2,
+    minRound: 2,
+    name: "OLEADA DE CALOR EXTREMA",
+    tagline: "DEMANDA CIVIL AL ALZA",
+    icon: "heat",
+    hexCode: "0xF86_CALOR // AACC_115",
+    description:
+      "40 °C a la sombra: el aire acondicionado dispara la demanda residencial un 15% en toda la región.",
+    objective: "La carga civil se come parte del margen.",
+    effects: { demand: { residential: 1.15 } },
+  },
+  {
+    id: "inc-turno",
+    family: "demand",
+    severity: 2,
+    minRound: 2,
+    name: "TURNO INDUSTRIAL DOBLE POR EXPORTACIÓN",
+    tagline: "CONSUMO INDUSTRIAL AL ALZA",
+    icon: "precision_manufacturing",
+    hexCode: "0x0A7_TURNO // EXPORT_120",
+    description:
+      "Llega un contrato urgente de exportación: las fábricas encendidas consumen un 20% más, pero pagan $600 extra si aguantan la ronda.",
+    objective: "Mantener la industria rinde más... y cuesta más MW.",
+    effects: { demand: { industry: 1.2 }, industryRevenueBonus: 600 },
+  },
+  {
+    id: "inc-hospital",
+    family: "demand",
+    severity: 2,
+    minRound: 2,
+    name: "TRASLADO MASIVO AL HOSPITAL CENTRAL",
+    tagline: "CARGA CRÍTICA AL ALZA",
+    icon: "emergency",
+    hexCode: "0x1B8_HOSPITAL // UCI_125",
+    description:
+      "Un accidente múltiple desborda las salas: los servicios críticos consumen un 25% más esta ronda.",
+    objective: "Cortar servicios críticos ahora duele más que nunca.",
+    effects: { demand: { critical: 1.25 } },
+  },
+  {
+    id: "inc-cadena-frio",
+    family: "demand",
+    severity: 3,
+    minRound: 3,
+    name: "CADENA DE FRÍO EN ALERTA SANITARIA",
+    tagline: "DEMANDA CIVIL Y CRÍTICA AL ALZA",
+    icon: "ac_unit",
+    hexCode: "0x2C9_FRIO // SANIT_110",
+    description:
+      "Alerta sanitaria: residencial y servicios críticos consumen un 10% más cada uno para mantener la cadena de frío.",
+    objective: "El consumo civil presiona por los dos lados.",
+    effects: { demand: { residential: 1.1, critical: 1.1 } },
+  },
+
+  // -- economy: dinero y bienestar ------------------------------------------
+  {
+    id: "inc-subsidio",
+    family: "economy",
+    severity: 1,
+    minRound: 2,
+    name: "SUBSIDIO DE EMERGENCIA DEL ESTADO",
+    tagline: "CAJA EXTRA",
+    icon: "payments",
+    hexCode: "0x3DA_SUBSIDIO // +800",
+    description:
+      "El gobierno nacional gira un subsidio de emergencia: cada distrito recibe $800 al cerrar la ronda.",
+    objective: "Alivio financiero: úsalo para sobrevivir, no para lucrar.",
+    effects: { budgetAll: 800 },
+  },
+  {
+    id: "inc-huelga",
+    family: "economy",
+    severity: 2,
+    minRound: 2,
+    name: "HUELGA EN LA PLANTA DE BOMBEO",
+    tagline: "COSTOS AL ALZA",
+    icon: "engineering",
+    hexCode: "0x4EB_HUELGA // -400",
+    description:
+      "Los operarios de bombeo paran: cada distrito paga $400 extra de mantenimiento y otros $400 si además hay apagón.",
+    objective: "Sostener la red con la plantilla parada sale carísimo.",
+    effects: { budgetAll: -400, blackoutBudgetExtra: -400 },
+  },
+  {
+    id: "inc-saqueo",
+    family: "economy",
+    severity: 2,
+    minRound: 2,
+    name: "SAQUEO EN LOS BARRIOS DEL ESTE",
+    tagline: "BIENESTAR AL ALZA DEL DESCONTENTO",
+    icon: "local_police",
+    hexCode: "0x5FC_SAQUEO // -80",
+    description:
+      "Los cortes acumulados provocan disturbios: cada distrito pierde 80 pts de Bienestar, y 120 más si la red cae en apagón.",
+    objective: "La paciencia civil tiene un precio.",
+    effects: { welfareAll: -80, blackoutWelfareExtra: -120 },
+  },
+  {
+    id: "inc-empleo",
+    family: "economy",
+    severity: 1,
+    minRound: 2,
+    name: "PLAN DE EMPLEO DE EMERGENCIA",
+    tagline: "CAJA A CAMBIO DE PACIENCIA",
+    icon: "groups",
+    hexCode: "0x60D_EMPLEO // +300-40",
+    description:
+      "El distrito contrata brigadas de choque: +$300 de tesorería y -40 pts de Bienestar por el esfuerzo social.",
+    objective: "Dinero hoy, desgaste civil mañana.",
+    effects: { budgetAll: 300, welfareAll: -40 },
+  },
+  {
+    id: "inc-auditoria",
+    family: "economy",
+    severity: 3,
+    minRound: 3,
+    name: "AUDITORÍA DEL REGULADOR",
+    tagline: "SE PAGA POR RESULTADOS",
+    icon: "fact_check",
+    hexCode: "0x71E_AUDITORIA // CONDICIONAL",
+    description:
+      "El regulador retiene $600 de garantía a cada distrito, pero devuelve $900 adicionales a quien cierre la ronda con la red estable.",
+    objective: "Aquí el apagón colectivo sale el doble de caro.",
+    effects: { budgetAll: -600, stableBudgetBonus: 900 },
+  },
+
+  // -- lock: el mando se bloquea --------------------------------------------
+  {
+    id: "inc-cuarentena",
+    family: "lock",
+    severity: 2,
+    minRound: 2,
+    name: "CUARENTENA EN LAS SALAS DE TRAUMA",
+    tagline: "SERVICIOS CRÍTICOS BLOQUEADOS",
+    icon: "lock",
+    hexCode: "0x82F_CUARENTENA // LOCK_CRIT",
+    description:
+      "Aislamiento biológico en el bloque quirúrgico: los SERVICIOS CRÍTICOS no se pueden cortar en esta ronda. Las palancas de esa carga están bloqueadas.",
+    objective: "Habrá que sacrificar industria o zonas residenciales en su lugar.",
+    effects: { lockSectors: ["critical"] },
+  },
+  {
+    id: "inc-oxigeno",
+    family: "lock",
+    severity: 3,
+    minRound: 3,
+    name: "OXÍGENO CRÍTICO EN CUIDADOS INTENSIVOS",
+    tagline: "CRÍTICOS BLOQUEADOS Y COSTO EXTRA",
+    icon: "pulmonology",
+    hexCode: "0x930_OXIGENO // LOCK_CRIT_300",
+    description:
+      "Los pulmones artificiales están al límite: los SERVICIOS CRÍTICOS quedan bloqueados y el operativo cuesta $300 a cada distrito.",
+    objective: "La vida crítica no se negocia; el resto sí.",
+    effects: { lockSectors: ["critical"], budgetAll: -300 },
+  },
+
+  // -- boost: alivio --------------------------------------------------------
+  {
+    id: "inc-trasvase",
+    family: "boost",
+    severity: 1,
+    minRound: 2,
+    name: "TRASVASE DE EMERGENCIA HABILITADO",
+    tagline: "TECHO ELÉCTRICO AL ALZA",
+    icon: "water",
+    hexCode: "0xA41_TRASVASE // +10",
+    description:
+      "Se abre el trasvase entre cuencas: la región gana un 10% de capacidad eléctrica durante la ronda.",
+    objective: "Margen extra, pero más de una mesa se tentará.",
+    effects: { electricMultiplier: 1.1 },
+  },
+  {
+    id: "inc-carga-gas",
+    family: "boost",
+    severity: 1,
+    minRound: 2,
+    name: "BUQUE METANERO ATRACADO EN PUERTO",
+    tagline: "TECHO DE GAS AL ALZA",
+    icon: "directions_boat",
+    hexCode: "0xB52_METANERO // +10",
+    description:
+      "Un metanero descarga de urgencia: la región gana un 10% de capacidad de gas durante la ronda.",
+    objective: "Respiro para las calderas.",
+    effects: { gasMultiplier: 1.1 },
+  },
+  {
+    id: "inc-mercado",
+    family: "boost",
+    severity: 3,
+    minRound: 3,
+    name: "MERCADO SPOT A PRECIO DE RUINA",
+    tagline: "MÁS MW, MENOS CAJA",
+    icon: "currency_exchange",
+    hexCode: "0xC63_SPOT // +10-700",
+    description:
+      "El operador compra potencia en el mercado spot: +10% de capacidad eléctrica y -$700 para cada distrito.",
+    objective: "El margen se compra con dinero, no con coordinación.",
+    effects: { electricMultiplier: 1.1, budgetAll: -700 },
+  },
+];
+
+/** Severidad máxima admisible por ronda (la curva de dificultad del guion). */
+const INCIDENT_MAX_SEVERITY = { 1: 0, 2: 2, 3: 3, 4: 3 };
+/** Incidentes sorteados por ronda. */
+const INCIDENT_COUNT_BY_ROUND = { 1: 0, 2: 1, 3: 1, 4: 2 };
+
+/** Efectos neutros: cualquier campo ausente del incidente vale esto. */
+function neutralEffects() {
+  return {
+    electricMultiplier: 1,
+    gasMultiplier: 1,
+    demand: { industry: 1, residential: 1, critical: 1 },
+    welfareAll: 0,
+    budgetAll: 0,
+    blackoutWelfareExtra: 0,
+    blackoutBudgetExtra: 0,
+    stableWelfareBonus: 0,
+    stableBudgetBonus: 0,
+    industryRevenueBonus: 0,
+    lockSectors: [],
+  };
+}
+
+/** Normaliza los efectos de un incidente (rellena lo ausente). */
+function incidentEffects(incident) {
+  const base = neutralEffects();
+  if (!incident || !incident.effects) return base;
+  const e = incident.effects;
+  return {
+    ...base,
+    ...e,
+    demand: { ...base.demand, ...(e.demand || {}) },
+    lockSectors: Array.isArray(e.lockSectors) ? e.lockSectors.slice() : [],
+  };
+}
+
+/**
+ * PRNG determinista (mulberry32) sobre el estado de la sala. Se guarda el
+ * estado en `room.rngState` para que el sorteo sea reproducible con la semilla.
+ */
+function nextRandom(room) {
+  let t = (room.rngState = (room.rngState + 0x6d2b79f5) >>> 0);
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+
+/** Multiplicadores agregados de los incidentes de la ronda. */
+function incidentMultipliers(incidents) {
+  const list = Array.isArray(incidents) ? incidents : [];
+  const acc = {
+    electricMultiplier: 1,
+    gasMultiplier: 1,
+    demand: { industry: 1, residential: 1, critical: 1 },
+    welfareAll: 0,
+    budgetAll: 0,
+    blackoutWelfareExtra: 0,
+    blackoutBudgetExtra: 0,
+    stableWelfareBonus: 0,
+    stableBudgetBonus: 0,
+    industryRevenueBonus: 0,
+    lockSectors: [],
+  };
+
+  for (const incident of list) {
+    const e = incidentEffects(incident);
+    acc.electricMultiplier *= e.electricMultiplier;
+    acc.gasMultiplier *= e.gasMultiplier;
+    acc.demand.industry *= e.demand.industry;
+    acc.demand.residential *= e.demand.residential;
+    acc.demand.critical *= e.demand.critical;
+    acc.welfareAll += e.welfareAll;
+    acc.budgetAll += e.budgetAll;
+    acc.blackoutWelfareExtra += e.blackoutWelfareExtra;
+    acc.blackoutBudgetExtra += e.blackoutBudgetExtra;
+    acc.stableWelfareBonus += e.stableWelfareBonus;
+    acc.stableBudgetBonus += e.stableBudgetBonus;
+    acc.industryRevenueBonus += e.industryRevenueBonus;
+    for (const key of e.lockSectors) {
+      if (!acc.lockSectors.includes(key)) acc.lockSectors.push(key);
+    }
+  }
+
+  return acc;
+}
+
+/**
+ * Sortea los incidentes de una ronda. Consume el PRNG de la sala, así que el
+ * orden de llamadas es parte del contrato (una vez por ronda, en startRound).
+ */
+function drawIncidents(room, round) {
+  const count = INCIDENT_COUNT_BY_ROUND[round] !== undefined ? INCIDENT_COUNT_BY_ROUND[round] : 1;
+  if (count <= 0) return [];
+
+  const maxSeverity = INCIDENT_MAX_SEVERITY[round] !== undefined ? INCIDENT_MAX_SEVERITY[round] : 3;
+  const used = Array.isArray(room.usedIncidentIds) ? room.usedIncidentIds : [];
+  const available = INCIDENT_POOL.filter(
+    (incident) =>
+      !used.includes(incident.id) && incident.severity <= maxSeverity && round >= (incident.minRound || 2)
+  );
+
+  const picked = [];
+  const families = [];
+
+  // Primera pasada: una sola familia por ronda (diversidad de problemas).
+  while (picked.length < count && available.length > 0) {
+    const candidate = available.splice(Math.floor(nextRandom(room) * available.length), 1)[0];
+    if (families.includes(candidate.family)) continue;
+    families.push(candidate.family);
+    picked.push(candidate);
+  }
+
+  // Segunda pasada (reserva): si el filtro por familia dejó la ronda corta.
+  while (picked.length < count && available.length > 0) {
+    picked.push(available.splice(Math.floor(nextRandom(room) * available.length), 1)[0]);
+  }
+
+  return picked;
+}
+
+/** Etiquetas cortas del incidente, para el proyector y los registros. */
+function incidentTags(incident) {
+  const e = incidentEffects(incident);
+  const tags = [];
+  const pct = (value) => `${value > 1 ? "+" : "-"}${Math.round(Math.abs(1 - value) * 100)}%`;
+
+  if (e.electricMultiplier !== 1) tags.push(`ELÉCTRICA ${pct(e.electricMultiplier)}`);
+  if (e.gasMultiplier !== 1) tags.push(`GAS ${pct(e.gasMultiplier)}`);
+  if (e.demand.industry !== 1) tags.push(`DEMANDA INDUSTRIAL x${round2(e.demand.industry)}`);
+  if (e.demand.residential !== 1) tags.push(`DEMANDA CIVIL x${round2(e.demand.residential)}`);
+  if (e.demand.critical !== 1) tags.push(`CARGA CRÍTICA x${round2(e.demand.critical)}`);
+  if (e.welfareAll !== 0) tags.push(`${e.welfareAll > 0 ? "+" : ""}${e.welfareAll} BIENESTAR A TODOS`);
+  if (e.budgetAll !== 0) tags.push(`${e.budgetAll > 0 ? "+" : ""}$${e.budgetAll} A TODOS`);
+  if (e.stableBudgetBonus !== 0) tags.push(`+$${e.stableBudgetBonus} SI LA RED AGUANTA`);
+  if (e.blackoutBudgetExtra !== 0) tags.push(`$${e.blackoutBudgetExtra} EXTRA SI HAY APAGÓN`);
+  if (e.blackoutWelfareExtra !== 0) tags.push(`${e.blackoutWelfareExtra} BIENESTAR EXTRA SI HAY APAGÓN`);
+  if (e.industryRevenueBonus !== 0) tags.push(`+$${e.industryRevenueBonus} INDUSTRIA ACTIVA`);
+  for (const key of e.lockSectors) tags.push(`${SECTOR_SPECS[key] ? SECTOR_SPECS[key].label : key} BLOQUEADA`);
+
+  return tags;
+}
+
+function round2(value) {
+  return Math.round(value * 100) / 100;
+}
+
+/** ¿Está bloqueada la palanca de este sector en la ronda vigente? */
+function isSectorLocked(room, sector) {
+  return Boolean(room && room.lockedSectors && room.lockedSectors[sector]);
+}
+
+function incidentById(id) {
+  return INCIDENT_POOL.find((incident) => incident.id === id) || null;
+}
+
+/**
+ * Mensajes de registro que produce el sorteo de la ronda. Los usan los dos
+ * runtimes (Node y Durable Object) para que el proyector cuente lo mismo.
+ */
+function incidentLogLines(room) {
+  const lines = [];
+  for (const incident of room.incidents || []) {
+    const tags = incidentTags(incident).join(" · ") || incident.tagline;
+    lines.push({ type: "WARN", message: `INCIDENTE: ${incident.name} // ${tags}` });
+  }
+  const locked = SECTOR_ORDER.filter((key) => isSectorLocked(room, key));
+  if (locked.length > 0) {
+    lines.push({
+      type: "ALERT",
+      message: `PALANCAS BLOQUEADAS: ${locked.map((key) => SECTOR_SPECS[key].label).join(" // ")} NO SE PUEDEN CORTAR ESTA RONDA`,
+    });
+  }
+  return lines;
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -184,12 +661,21 @@ function emptySectors(value = true) {
   return { industry: value, residential: value, critical: value };
 }
 
+/** Palancas bloqueadas por un incidente de la ronda (no se pueden cortar). */
+function emptyLockedSectors() {
+  return { industry: false, residential: false, critical: false };
+}
+
 /**
- * Demanda de un distrito según el estado de sus sectores y la crisis vigente.
+ * Demanda de un distrito según el estado de sus sectores, la crisis vigente y
+ * los incidentes aleatorios de la ronda. El resultado se redondea por distrito
+ * para que el proyector y los mandos muestren enteros.
  * @param {{industry: boolean, residential: boolean, critical: boolean}} sectors
  * @param {object | null} crisis
+ * @param {object[]} [incidents]
  */
-function districtDemand(sectors, crisis) {
+function districtDemand(sectors, crisis, incidents) {
+  const inc = incidentMultipliers(incidents);
   const resMultiplier = crisis && crisis.residentialDemandMultiplier ? crisis.residentialDemandMultiplier : 1;
   let mw = 0;
   let gas = 0;
@@ -197,24 +683,24 @@ function districtDemand(sectors, crisis) {
   for (const key of SECTOR_ORDER) {
     if (!sectors || !sectors[key]) continue;
     const spec = SECTOR_SPECS[key];
-    const factor = key === "residential" ? resMultiplier : 1;
+    const factor = (key === "residential" ? resMultiplier : 1) * (inc.demand[key] || 1);
     mw += spec.demandMW * factor;
     gas += spec.demandGas * factor;
   }
 
-  return { mw, gas };
+  return { mw: Math.round(mw), gas: Math.round(gas) };
 }
 
 /**
  * Demanda agregada del panel. Se cuentan TODOS los distritos presentes en la
  * sala (con o sin operador conectado): una mesa sin teléfono sigue consumiendo.
  */
-function totalDemand(teams, crisis) {
+function totalDemand(teams, crisis, incidents) {
   const list = Array.isArray(teams) ? teams : Object.values(teams || {});
   const total = { mw: 0, gas: 0, perTeam: {} };
 
   for (const team of list) {
-    const d = districtDemand(team.sectors, crisis);
+    const d = districtDemand(team.sectors, crisis, incidents);
     total.mw += d.mw;
     total.gas += d.gas;
     total.perTeam[team.id] = d;
@@ -225,21 +711,29 @@ function totalDemand(teams, crisis) {
 
 /**
  * Capacidad regional de la ronda: la base es igual a la demanda base del panel
- * (360 MW / 750 m3 por distrito) y la crisis aplica sus multiplicadores.
+ * (360 MW / 750 m3 por distrito); la crisis (§6) y los incidentes aleatorios
+ * aplican sus multiplicadores de forma multiplicativa.
  * @param {number} districtCount
  * @param {object | null} crisis
+ * @param {object[]} [incidents]
  */
-function regionalCapacity(districtCount, crisis) {
+function regionalCapacity(districtCount, crisis, incidents) {
   const n = Math.max(1, districtCount);
+  const inc = incidentMultipliers(incidents);
   const baseMW = BASE_DEMAND_MW_PER_DISTRICT * n;
   const baseGas = BASE_DEMAND_GAS_PER_DISTRICT * n;
+  const electric = (crisis ? crisis.electricMultiplier : 1) * inc.electricMultiplier;
+  const gas = (crisis ? crisis.gasMultiplier : 1) * inc.gasMultiplier;
 
   return {
     districts: n,
     baseMW,
     baseGas,
-    maxMW: Math.round(baseMW * (crisis ? crisis.electricMultiplier : 1)),
-    maxGas: Math.round(baseGas * (crisis ? crisis.gasMultiplier : 1)),
+    /** Multiplicador combinado (crisis x incidentes) que ve el proyector. */
+    electricMultiplier: round2(electric),
+    gasMultiplier: round2(gas),
+    maxMW: Math.round(baseMW * electric),
+    maxGas: Math.round(baseGas * gas),
   };
 }
 
@@ -298,10 +792,19 @@ function createDistrictTeam({ id, districtId, operator = null, claimed = false }
   };
 }
 
-function createRoom(pin) {
+function createRoom(pin, { seed, incidents = true } = {}) {
+  const resolvedSeed = Number.isFinite(seed)
+    ? seed >>> 0
+    : (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;
+
   return {
     pin,
     version: VERSION,
+    /** Semilla del sorteo de incidentes: la partida se puede reproducir. */
+    seed: resolvedSeed,
+    rngState: resolvedSeed,
+    /** false = partida con la aritmética del documento, sin incidentes. */
+    incidentsEnabled: Boolean(incidents),
     phase: /** @type {GamePhase} */ ("LOBBY"),
     currentRound: 0,
     totalRounds: TOTAL_ROUNDS,
@@ -316,8 +819,12 @@ function createRoom(pin) {
     deadlineTs: null,
     timerRunning: false,
     activeCrisis: null,
-    capacity: regionalCapacity(0, null),
-    demand: totalDemand([], null),
+    /** Incidentes aleatorios vigentes en la ronda (vacío fuera de ronda). */
+    incidents: [],
+    usedIncidentIds: [],
+    lockedSectors: emptyLockedSectors(),
+    capacity: regionalCapacity(0, null, []),
+    demand: totalDemand([], null, []),
     blackoutCount: 0,
     teams: {},
     logs: [
@@ -346,7 +853,22 @@ function districtCount(room) {
 function startRound(room, round = room.currentRound + 1) {
   room.currentRound = round;
   room.activeCrisis = crisisForRound(round);
-  room.capacity = regionalCapacity(districtCount(room), room.activeCrisis);
+
+  // Sorteo de incidentes: consume el PRNG de la sala (una vez por ronda) y
+  // nunca repite un incidente dentro de la misma partida.
+  if (!Array.isArray(room.usedIncidentIds)) room.usedIncidentIds = [];
+  room.incidents = room.incidentsEnabled === false ? [] : drawIncidents(room, round);
+  for (const incident of room.incidents) {
+    if (!room.usedIncidentIds.includes(incident.id)) room.usedIncidentIds.push(incident.id);
+  }
+
+  // Bloqueos de palanca declarados por los incidentes de esta ronda.
+  room.lockedSectors = emptyLockedSectors();
+  for (const key of incidentMultipliers(room.incidents).lockSectors) {
+    if (room.lockedSectors[key] !== undefined) room.lockedSectors[key] = true;
+  }
+
+  room.capacity = regionalCapacity(districtCount(room), room.activeCrisis, room.incidents);
 
   // Cada ronda arranca con las palancas rearmadas: la negociación decide de
   // nuevo qué se corta (el documento narra cada ronda sobre la red completa).
@@ -354,7 +876,7 @@ function startRound(room, round = room.currentRound + 1) {
     team.sectors = emptySectors(true);
   }
 
-  room.demand = totalDemand(Object.values(room.teams), room.activeCrisis);
+  room.demand = totalDemand(Object.values(room.teams), room.activeCrisis, room.incidents);
   room.phase = "CRISIS_ANNOUNCE";
   room.timeRemaining = room.announceSeconds;
   room.deadlineTs = Date.now() + room.announceSeconds * 1000;
@@ -374,7 +896,7 @@ function openNegotiation(room) {
 }
 
 function recomputeDerived(room) {
-  room.demand = totalDemand(Object.values(room.teams), room.activeCrisis);
+  room.demand = totalDemand(Object.values(room.teams), room.activeCrisis, room.incidents);
   return room.demand;
 }
 
@@ -390,10 +912,10 @@ function resolveRound(room) {
   // La capacidad se fijó al anunciar la crisis; si un distrito se sumó en la
   // ronda, su demanda cuenta pero la red no gana capacidad.
   if (!room.capacity || !room.capacity.maxMW) {
-    room.capacity = regionalCapacity(teams.length, crisis);
+    room.capacity = regionalCapacity(teams.length, crisis, room.incidents);
   }
 
-  const demand = totalDemand(teams, crisis);
+  const demand = totalDemand(teams, crisis, room.incidents);
   room.demand = demand;
 
   const overloadMW = demand.mw > room.capacity.maxMW;
@@ -453,6 +975,65 @@ function resolveRound(room) {
       }
     }
 
+    // Incidentes aleatorios: dinero y bienestar que reparte el suceso de la ronda.
+    const incidentFx = incidentMultipliers(room.incidents);
+
+    if (incidentFx.welfareAll !== 0) {
+      welfareDelta += incidentFx.welfareAll;
+      lines.push({
+        kind: incidentFx.welfareAll > 0 ? "bonus" : "penalty",
+        text: `INCIDENTE // BIENESTAR GENERAL: ${incidentFx.welfareAll > 0 ? "+" : ""}${incidentFx.welfareAll} Bienestar`,
+      });
+    }
+
+    if (incidentFx.budgetAll !== 0) {
+      budgetDelta += incidentFx.budgetAll;
+      lines.push({
+        kind: incidentFx.budgetAll > 0 ? "bonus" : "penalty",
+        text: `INCIDENTE // CAJA GENERAL: ${incidentFx.budgetAll > 0 ? "+" : ""}${incidentFx.budgetAll} $`,
+      });
+    }
+
+    if (incidentFx.industryRevenueBonus !== 0 && team.sectors.industry) {
+      budgetDelta += incidentFx.industryRevenueBonus;
+      lines.push({
+        kind: "bonus",
+        text: `INCIDENTE // NEGOCIO EXTRA DE LA INDUSTRIA ENCENDIDA: +${incidentFx.industryRevenueBonus} $`,
+      });
+    }
+
+    if (isBlackout) {
+      if (incidentFx.blackoutWelfareExtra !== 0) {
+        welfareDelta += incidentFx.blackoutWelfareExtra;
+        lines.push({
+          kind: "penalty",
+          text: `INCIDENTE // GOLPE EXTRA POR APAGÓN: ${incidentFx.blackoutWelfareExtra} Bienestar`,
+        });
+      }
+      if (incidentFx.blackoutBudgetExtra !== 0) {
+        budgetDelta += incidentFx.blackoutBudgetExtra;
+        lines.push({
+          kind: "penalty",
+          text: `INCIDENTE // GOLPE EXTRA POR APAGÓN: ${incidentFx.blackoutBudgetExtra} $`,
+        });
+      }
+    } else {
+      if (incidentFx.stableWelfareBonus !== 0) {
+        welfareDelta += incidentFx.stableWelfareBonus;
+        lines.push({
+          kind: "bonus",
+          text: `INCIDENTE // BONO POR RED ESTABLE: +${incidentFx.stableWelfareBonus} Bienestar`,
+        });
+      }
+      if (incidentFx.stableBudgetBonus !== 0) {
+        budgetDelta += incidentFx.stableBudgetBonus;
+        lines.push({
+          kind: "bonus",
+          text: `INCIDENTE // BONO POR RED ESTABLE: +${incidentFx.stableBudgetBonus} $`,
+        });
+      }
+    }
+
     if (team.sectors.industry) {
       team.industryRoundsOn += 1;
     }
@@ -490,6 +1071,8 @@ function resolveRound(room) {
     marginGas: room.capacity.maxGas - demand.gas,
     blackoutCount: room.blackoutCount,
     irreversible: room.blackoutCount >= MAX_BLACKOUTS,
+    incidents: (room.incidents || []).map((incident) => ({ id: incident.id, name: incident.name })),
+    lockedSectors: { ...(room.lockedSectors || emptyLockedSectors()) },
     teamResults,
   };
 
@@ -549,6 +1132,9 @@ function finalResults(room, { irreversible = false } = {}) {
     irreversible,
     blackoutCount: room.blackoutCount,
     roundsPlayed: room.currentRound,
+    /** Semilla y guion de la partida: permite repetirla o analizarla. */
+    seed: room.seed,
+    incidentsPlayed: (room.usedIncidentIds || []).slice(),
     ranking,
     mentions,
   };
@@ -558,6 +1144,9 @@ module.exports = {
   VERSION,
   SECTOR_ORDER,
   SECTOR_SPECS,
+  INCIDENT_POOL,
+  INCIDENT_MAX_SEVERITY,
+  INCIDENT_COUNT_BY_ROUND,
   BASE_DEMAND_MW_PER_DISTRICT,
   BASE_DEMAND_GAS_PER_DISTRICT,
   INITIAL_WELFARE,
@@ -575,6 +1164,16 @@ module.exports = {
   DISTRICTS,
   CRISIS_PRESETS,
   emptySectors,
+  emptyLockedSectors,
+  neutralEffects,
+  incidentEffects,
+  incidentMultipliers,
+  incidentTags,
+  incidentById,
+  incidentLogLines,
+  drawIncidents,
+  isSectorLocked,
+  nextRandom,
   districtDemand,
   totalDemand,
   regionalCapacity,

@@ -3,6 +3,8 @@ import { Header } from "@/components/Header";
 import { CrtContainer } from "@/components/CrtContainer";
 import {
   CRISIS_PRESETS,
+  INCIDENT_POOL,
+  incidentTags,
   INITIAL_BUDGET,
   INITIAL_WELFARE,
   MAX_BLACKOUTS,
@@ -59,6 +61,10 @@ export default function RulesPage() {
           <p className="font-data text-[11px] text-outline">
             // Cada ronda arranca con las tres palancas de todos los distritos rearmadas al 100%: la decisión se
             toma de nuevo, ronda a ronda.
+          </p>
+          <p className="font-data text-[11px] text-on-surface-variant">
+            // Sobre esta crisis se sortean incidentes aleatorios (ver la sección siguiente): dos partidas de 4
+            rondas casi nunca se juegan igual.
           </p>
         </section>
 
@@ -138,6 +144,49 @@ export default function RulesPage() {
               </span>
             </div>
           </div>
+        </section>
+
+        <section className="bg-surface-container-lowest border border-surface-container-high rounded-xl p-4 sm:p-6 flex flex-col gap-3">
+          <h2 className="font-headline text-xl font-bold text-primary uppercase phosphor-glow-green">
+            Incidentes aleatorios
+          </h2>
+          <p className="font-data text-xs text-on-surface-variant leading-relaxed">
+            Cada partida sortea <strong className="text-on-surface">incidentes</strong> sobre la crisis de la ronda:
+            sucesos que recortan el techo, suben el consumo, mueven dinero y bienestar, bloquean palancas o dan algo
+            de aire. La ronda 1 (tutorial) no lleva incidentes; la 2 y la 3 llevan uno; el final lleva dos, de
+            familias distintas. Un incidente <strong className="text-on-surface">nunca se repite</strong> en la misma
+            partida, y el sorteo depende de una semilla que el proyector muestra: dos salas con el mismo número juegan
+            exactamente el mismo guion.
+          </p>
+          <div className="flex flex-col gap-2">
+            {INCIDENT_POOL.map((incident) => (
+              <div
+                key={incident.id}
+                className="bg-surface-container p-3 rounded-lg border border-surface-container-high font-data text-[11px] flex flex-col gap-1"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-warning-amber font-bold uppercase">
+                    {incident.name}
+                  </span>
+                  <span className="text-outline text-[10px] uppercase">
+                    {incident.tagline} // SEV {incident.severity} // DESDE LA RONDA {incident.minRound}
+                  </span>
+                </div>
+                <p className="text-on-surface-variant">{incident.description}</p>
+                <div className="flex flex-wrap gap-2 text-[10px] text-warning-amber">
+                  {incidentTags(incident).map((tag) => (
+                    <span key={tag} className="border border-warning-amber/40 rounded px-1.5 py-0.5 uppercase">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="font-data text-[11px] text-outline">
+            // Un incidente de bloqueo solo puede congelar los SERVICIOS CRÍTICOS: industria y zona residencial
+            siguen siendo negociables, así que la ronda siempre tiene salida.
+          </p>
         </section>
 
         <section className="bg-surface-container-lowest border border-surface-container-high rounded-xl p-4 sm:p-6 flex flex-col gap-3">

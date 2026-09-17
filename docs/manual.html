@@ -1,0 +1,949 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>BLACKOUT: GRID COLLAPSE — Manual de operación</title><style>
+:root { --bg:#07100b; --panel:#0d1a12; --line:#1e3a28; --ink:#d6f5e0; --dim:#8fb8a0;
+        --green:#2bf075; --amber:#ffb547; --red:#ff4d5e; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--ink);
+       font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+       font-size:11.5px; line-height:1.55; }
+.page { max-width: 940px; margin:0 auto; padding: 28px 34px 60px; }
+h1 { font-size:26px; color:var(--green); letter-spacing:.5px; text-transform:uppercase;
+     border-bottom:2px solid var(--line); padding-bottom:10px; margin:0 0 18px; }
+h2 { font-size:16px; color:var(--green); text-transform:uppercase; letter-spacing:.6px;
+     margin:26px 0 8px; border-left:4px solid var(--green); padding-left:9px; page-break-after:avoid; }
+h3 { font-size:13px; color:var(--amber); text-transform:uppercase; margin:18px 0 6px; page-break-after:avoid; }
+p, li { color:var(--ink); }
+strong { color:#fff; }
+a { color:var(--amber); text-decoration:none; }
+code { background:#0a1710; border:1px solid var(--line); border-radius:3px; padding:1px 4px; color:var(--green); }
+pre { background:#050c07; border:1px solid var(--line); border-radius:6px; padding:12px 14px; overflow-x:auto;
+      page-break-inside:avoid; }
+pre code { background:none; border:none; color:#bfeed0; padding:0; font-size:11px; }
+table { width:100%; border-collapse:collapse; margin:10px 0 16px; page-break-inside:avoid; font-size:10.5px; }
+th, td { border:1px solid var(--line); padding:6px 8px; text-align:left; vertical-align:top; }
+th { background:#0e2016; color:var(--green); text-transform:uppercase; font-size:9.5px; letter-spacing:.4px; }
+tr:nth-child(even) td { background:#0a150e; }
+hr { border:none; border-top:1px solid var(--line); margin:22px 0; }
+blockquote { border-left:3px solid var(--amber); margin:10px 0; padding:2px 12px; color:var(--dim); }
+ul, ol { padding-left:22px; }
+li { margin:2px 0; }
+@page { size: A4; margin: 12mm; }
+@media print { body { background:#fff; color:#111; } .page { padding:0; }
+  h1, h2, h3 { color:#0a5c2c; border-color:#9fd6b4; }
+  p, li, td, th { color:#111; }
+  strong, em, b, i { color:#000; }
+  th { background:#eaf7ef; color:#0a5c2c; } tr:nth-child(even) td { background:#f6fbf8; }
+  pre { background:#f4f8f5; border-color:#cfe7d8; } pre code { color:#123; }
+  code { background:#f4f8f5; color:#0a5c2c; border-color:#cfe7d8; }
+  table, pre, blockquote { page-break-inside:avoid; } a { color:#0a4a8a; } }
+</style></head><body><div class="page"><h1>BLACKOUT: GRID COLLAPSE — MANUAL DE OPERACIÓN</h1>
+<p><strong>Versión 5.1</strong> · simulador multijugador asimétrico de gestión de crisis eléctrica para un salón de clase.</p>
+<p>Este manual explica <strong>cómo funciona el juego, sus reglas exactas y cómo se opera en el aula</strong>. La misma</p>
+<p>información, en versión corta y para los estudiantes, está dentro de la aplicación en <code>/rules</code>.</p>
+<p>Origen de las reglas: la nota de Obsidian <em>Juego - NFI</em> (crisis, sectores, castigos y criterios de victoria),</p>
+<p>implementada en <code>src/shared/rules.js</code>, que es la <strong>única fuente de verdad</strong> del motor.</p>
+<hr/>
+<h2 id="índice">Índice</h2>
+<ul>
+<li>1. <a href="#1-el-juego-en-60-segundos">El juego en 60 segundos</a></li>
+<li>2. <a href="#2-roles-pantallas-y-montaje">Roles, pantallas y montaje</a></li>
+<li>3. <a href="#3-recursos-sectores-y-demanda">Recursos, sectores y demanda</a></li>
+<li>4. <a href="#4-la-red-regional-capacidad-y-déficit">La red regional: capacidad y déficit</a></li>
+<li>5. <a href="#5-ciclo-de-una-ronda-paso-a-paso">Ciclo de una ronda, paso a paso</a></li>
+<li>6. <a href="#6-resolución-red-estable-o-blackout">Resolución: red estable o BLACKOUT</a></li>
+<li>7. <a href="#7-las-cuatro-crisis-oficiales">Las cuatro crisis oficiales</a></li>
+<li>8. <a href="#8-incidentes-aleatorios-la-variación-de-cada-partida">Incidentes aleatorios (la variación de cada partida)</a></li>
+<li>9. <a href="#9-palancas-bloqueadas">Palancas bloqueadas</a></li>
+<li>10. <a href="#10-fin-de-la-partida-y-puntuación">Fin de la partida y puntuación</a></li>
+<li>11. <a href="#11-partida-de-referencia-con-números-reales">Partida de referencia con números reales</a></li>
+<li>12. <a href="#12-protocolo-técnico-y-configuración">Protocolo técnico y configuración</a></li>
+<li>13. <a href="#13-puesta-en-marcha-lan-y-cloudflare">Puesta en marcha (LAN y Cloudflare)</a></li>
+<li>14. <a href="#14-verificación-qué-está-probado-y-cómo-repetirlo">Verificación: qué está probado y cómo repetirlo</a></li>
+<li>15. <a href="#15-guion-de-clase-checklist">Guion de clase (checklist)</a></li>
+<li>16. <a href="#16-problemas-conocidos-y-plan-b">Problemas conocidos y plan B</a></li>
+</ul>
+<hr/>
+<h2 id="1-el-juego-en-60-segundos">1. El juego en 60 segundos</h2>
+<p>La ciudad se queda sin generación suficiente. Cada mesa del salón controla un <strong>distrito</strong> con tres cargas</p>
+<p>(industria, zona residencial y servicios críticos). La red regional tiene un <strong>techo de megavatios y de gas</strong></p>
+<p>que se recorta en cada ronda. Durante 60 segundos los distritos <strong>negocian a voz en grito</strong> —la aplicación no</p>
+<p>tiene chat, a propósito— decidiendo quién apaga qué. Al expirar el cronómetro el servidor compara la demanda</p>
+<p>agregada con el techo:</p>
+<ul>
+<li><strong>Cabe</strong> → red estable: todos ganan 100 pts de Bienestar y cada distrito cobra o paga según lo que dejó encendido.</li>
+<li><strong>No cabe</strong> → <strong>BLACKOUT</strong> colectivo: −300 pts de Bienestar para todos, los ingresos industriales se anulan y</li>
+</ul>
+<p>  se cobran igual los costos fijos de red.</p>
+<p>Dos blackouts acumulados y la partida termina en <strong>fallo regional irreversible, sin ganadores</strong>. Si la red</p>
+<p>sobrevive las cuatro rondas, gana el distrito con mejor <strong>PEF = Bienestar final + (Tesorería final / 100)</strong>.</p>
+<p>El dilema central: mantener la industria encendida paga <strong>+$3.000 por ronda</strong> (y sube el PEF) pero consume</p>
+<p><strong>180 MW y 400 m³</strong> de los 360 MW y 750 m³ del distrito. Apagarla cuesta <strong>$1.000</strong> pero no daña el Bienestar.</p>
+<p>La zona residencial y los servicios críticos casi no dan dinero, pero apagarlos cuesta <strong>−150</strong> y **−450 pts de</p>
+<p>Bienestar<strong>. O sea: </strong>es rentable parasitar el margen de los demás hasta que la red se cae y pagan todos**.</p>
+<hr/>
+<h2 id="2-roles-pantallas-y-montaje">2. Roles, pantallas y montaje</h2>
+<table><thead><tr>
+<th>Rol</th>
+<th>Pantalla</th>
+<th>URL</th>
+<th>Qué hace</th>
+</tr></thead><tbody>
+<tr>
+<td><strong>Anfitrión / proyector</strong></td>
+<td>Monitor del salón</td>
+<td><code>/host</code></td>
+<td>Abre la sala (clave maestra), reserva el panel de distritos, arranca rondas, fuerza resoluciones y opera distritos sin teléfono</td>
+</tr>
+<tr>
+<td><strong>Mesa / distrito</strong></td>
+<td>Celular de cada mesa</td>
+<td><code>/</code> (o <code>/team</code>)</td>
+<td>Enciende y apaga los tres sectores de su distrito; lee el tablero espejo</td>
+</tr>
+<tr>
+<td><strong>Vista de red</strong></td>
+<td>Pantalla secundaria</td>
+<td><code>/grid</code></td>
+<td>Topología, osciloscopio y reserva girante (apoyo visual opcional)</td>
+</tr>
+<tr>
+<td><strong>Manual</strong></td>
+<td>Cualquiera</td>
+<td><code>/rules</code></td>
+<td>Reglas resumidas, tabla de sectores, pool de crisis e incidentes</td>
+</tr>
+<tr>
+<td><strong>Calibración CRT</strong></td>
+<td>—</td>
+<td><code>/crt</code></td>
+<td>Ajustes visuales del efecto retro (scanlines, curvatura, fósforo)</td>
+</tr>
+</tbody></table>
+<ul>
+<li><strong>Mesas por partida:</strong> 3 a 6 distritos (4 recomendado). Cada distrito puede existir sin teléfono: sigue</li>
+</ul>
+<p>  consumiendo y el anfitrión lo opera a mano desde el proyector. <strong>Una mesa sin teléfono no deja de consumir.</strong></p>
+<ul>
+<li><strong>Coordinación:</strong> verbal y presencial. La aplicación muestra el mismo tablero en todas las pantallas para que la</li>
+</ul>
+<p>  discusión sea sobre números compartidos.</p>
+<ul>
+<li><strong>PIN de sala:</strong> por defecto <code>VOLT</code>; cada PIN es una sala aislada (en Cloudflare, un Durable Object propio), así</li>
+</ul>
+<p>  que varias clases pueden jugar a la vez sin verse.</p>
+<ul>
+<li><strong>Clave maestra:</strong> por defecto <code>1984</code>, configurable por <code>HOST_PASSCODE</code>. Se valida en el servidor: sin clave,</li>
+</ul>
+<p>  el proyector no recibe estado ni puede mandar órdenes. <strong>En internet no uses la de por defecto.</strong></p>
+<hr/>
+<h2 id="3-recursos-sectores-y-demanda">3. Recursos, sectores y demanda</h2>
+<p>Cada distrito arranca igual: <strong>1.000 pts de Bienestar</strong> (rango 0–1.200) y <strong>$10.000 de tesorería</strong> (nunca</p>
+<p>por debajo de 0). Las tres cargas y su aritmética exacta:</p>
+<table><thead><tr>
+<th>Sector</th>
+<th>Demanda eléctrica</th>
+<th>Demanda de gas</th>
+<th>Encendido (por ronda)</th>
+<th>Apagado (por ronda)</th>
+<th>Si se apaga (Bienestar)</th>
+</tr></thead><tbody>
+<tr>
+<td><strong>Zona industrial</strong> (<code>industry</code>)</td>
+<td>180 MW</td>
+<td>400 m³</td>
+<td><strong>+$3.000</strong> de ingresos</td>
+<td><strong>−$1.000</strong> de paro técnico</td>
+<td>0 (sin daño civil)</td>
+</tr>
+<tr>
+<td><strong>Zona residencial</strong> (<code>residential</code>)</td>
+<td>120 MW</td>
+<td>250 m³</td>
+<td>−$500 de mantenimiento de red</td>
+<td>−$500 de mantenimiento de red</td>
+<td><strong>−150 pts</strong></td>
+</tr>
+<tr>
+<td><strong>Servicios críticos</strong> (<code>critical</code>)</td>
+<td>60 MW</td>
+<td>100 m³</td>
+<td>−$300 de mantenimiento de red</td>
+<td>−$300 de mantenimiento de red</td>
+<td><strong>−450 pts</strong></td>
+</tr>
+<tr>
+<td><strong>Total por distrito</strong></td>
+<td><strong>360 MW</strong></td>
+<td><strong>750 m³</strong></td>
+<td><strong>+$2.200 netos</strong></td>
+<td>—</td>
+<td>—</td>
+</tr>
+</tbody></table>
+<p>Notas de implementación que el salón nota:</p>
+<ul>
+<li>Los &quot;gastos fijos de red&quot; de residencial y críticos <strong>se cobran siempre</strong>, estén encendidos o apagados.</li>
+<li>El Bienestar se recorta solo cuando la ronda se resuelve con el sector apagado; la penalización se acumula en</li>
+</ul>
+<p>  la métrica interna <code>welfareSacrificed</code>, que es la que decide el título de <strong>Distrito Mártir</strong>.</p>
+<ul>
+<li>Los sectores se <strong>rearman al 100% al inicio de cada ronda</strong>: la decisión se toma de nuevo, ronda a ronda, y por</li>
+</ul>
+<p>  eso las traiciones de última ronda se repiten.</p>
+<hr/>
+<h2 id="4-la-red-regional-capacidad-y-déficit">4. La red regional: capacidad y déficit</h2>
+<p>La capacidad de la ronda se calcula así:</p>
+<pre><code>
+capacidad_MW  = 360 MW × nº_distritos × multiplicador_eléctrico(crisis) × ∏ multiplicadores_eléctricos(incidentes)
+capacidad_gas = 750 m³ × nº_distritos × multiplicador_gas(crisis)      × ∏ multiplicadores_gas(incidentes)
+</code></pre>
+<p>La base (360 MW / 750 m³ por distrito) es <strong>exactamente igual a la demanda base</strong> del panel: la red arranca</p>
+<p><strong>sin margen</strong>, así que cualquier crisis obliga a ceder carga. La demanda del panel es la suma de los distritos</p>
+<p>presentes, con los sectores encendidos en ese instante y los multiplicadores de demanda vigentes (crisis e</p>
+<p>incidentes). El redondeo es <strong>por distrito</strong>, así que el proyector y los mandos siempre enseñan enteros.</p>
+<p>Ejemplo con 4 distritos y todo encendido:</p>
+<table><thead><tr>
+<th>Ronda</th>
+<th>Crisis</th>
+<th>Multiplicadores</th>
+<th>Techo</th>
+<th>Demanda si nadie cede</th>
+</tr></thead><tbody>
+<tr>
+<td>1</td>
+<td>Mantenimiento de gasoducto</td>
+<td>eléctrico ×1,00 · gas ×0,80</td>
+<td>1.440 MW / 2.400 m³</td>
+<td>1.440 MW / <strong>3.000 m³</strong> ⚠</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Sequía hidrológica</td>
+<td>eléctrico ×0,65 · gas ×1,00</td>
+<td><strong>936 MW</strong> / 3.000 m³</td>
+<td>1.440 MW / 3.000 m³ ⚠</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Onda polar</td>
+<td>demanda civil ×2</td>
+<td>1.440 MW / 3.000 m³</td>
+<td><strong>1.920 MW / 4.000 m³</strong> ⚠</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Colapso de subestaciones</td>
+<td>eléctrico ×0,50 · gas ×0,50</td>
+<td><strong>720 MW / 1.500 m³</strong></td>
+<td>1.440 MW / 3.000 m³ ⚠</td>
+</tr>
+</tbody></table>
+<p>⚠ = <strong>no hacer nada es un blackout garantizado</strong>. El sistema muestra en vivo, en el proyector, la demanda</p>
+<p>agregada contra el techo y marca en rojo el déficit (MW, gas o ambos).</p>
+<hr/>
+<h2 id="5-ciclo-de-una-ronda-paso-a-paso">5. Ciclo de una ronda, paso a paso</h2>
+<p>Cada una de las 4 rondas sigue esta secuencia, gobernada por el servidor (reloj autoritativo):</p>
+<ul>
+<li>1. <strong>Anuncio de crisis (10 s, <code>ANNOUNCE_SECONDS</code>).</strong> El proyector muestra la tarjeta de la crisis y, si toca,</li>
+</ul>
+<p>   las tarjetas de los <strong>incidentes sorteados</strong>. La capacidad ya aparece recortada y los medidores entran en zona</p>
+<p>   de peligro. El anfitrión puede adelantar el paso con <code>ANUNCIO ADELANTADO</code>.</p>
+<ul>
+<li>2. <strong>Negociación en vivo (60 s, <code>NEGOTIATION_SECONDS</code>).</strong> El cronómetro corre en todas las pantallas. Cada palanca</li>
+</ul>
+<p>   que mueve una mesa cambia al instante los medidores del proyector. Se puede cambiar de decisión hasta el último</p>
+<p>   segundo (ahí está la gracia). El anfitrión puede operar a mano los distritos sin teléfono.</p>
+<ul>
+<li>3. <strong>Resolución automática (t = 0).</strong> Al expirar el cronómetro el servidor evalúa la red <strong>una sola vez</strong> y publica</li>
+</ul>
+<p>   el parte: estable o blackout, con el detalle económico y de bienestar distrito por distrito.</p>
+<ul>
+<li>4. <strong>Siguiente ronda.</strong> El anfitrión pulsa <code>SIGUIENTE RONDA</code>: vuelven a encenderse todas las palancas y se sortea</li>
+</ul>
+<p>   la crisis y los incidentes de la ronda siguiente. Tras la ronda 4 se publica la clasificación final.</p>
+<p>El anfitrión también puede <strong>forzar la resolución</strong> (<code>RESOLVER AHORA</code>) si la discusión se ha terminado antes, o</p>
+<p><strong>reiniciar</strong> la simulación completa (vuelve al vestíbulo y expulsa las sesiones de las mesas).</p>
+<p>El reloj <strong>no late</strong>: el estado publica la fecha límite (<code>deadlineTs</code>) y cada cliente dibuja su cuenta atrás; el</p>
+<p>servidor se despierta una sola vez, en esa fecha. Menos tráfico y un Durable Object que puede hibernar.</p>
+<hr/>
+<h2 id="6-resolución-red-estable-o-blackout">6. Resolución: red estable o BLACKOUT</h2>
+<p>Al resolver, el servidor compara <strong>dos condiciones simultáneas</strong>:</p>
+<pre><code>
+Σ demanda eléctrica ≤ capacidad eléctrica     Y     Σ demanda de gas ≤ capacidad de gas
+</code></pre>
+<p>Basta que <strong>una</strong> de las dos se pase para que haya blackout.</p>
+<h3 id="escenario-a--red-estable">Escenario A — RED ESTABLE</h3>
+<table><thead><tr>
+<th>Concepto</th>
+<th>Todos los distritos</th>
+</tr></thead><tbody>
+<tr>
+<td>Bienestar</td>
+<td><strong>+100 pts</strong> por garantizar la estabilidad</td>
+</tr>
+<tr>
+<td>Industria <strong>encendida</strong></td>
+<td><strong>+$3.000</strong> de ingresos</td>
+</tr>
+<tr>
+<td>Industria <strong>apagada</strong></td>
+<td><strong>−$1.000</strong> de paro técnico</td>
+</tr>
+<tr>
+<td>Mantenimiento de red residencial</td>
+<td><strong>−$500</strong></td>
+</tr>
+<tr>
+<td>Mantenimiento de red crítica</td>
+<td><strong>−$300</strong></td>
+</tr>
+<tr>
+<td>Zona residencial <strong>apagada</strong></td>
+<td><strong>−150 pts</strong> de Bienestar</td>
+</tr>
+<tr>
+<td>Servicios críticos <strong>apagados</strong></td>
+<td><strong>−450 pts</strong> de Bienestar</td>
+</tr>
+</tbody></table>
+<h3 id="escenario-b--blackout-fallo-colectivo">Escenario B — BLACKOUT (fallo colectivo)</h3>
+<table><thead><tr>
+<th>Concepto</th>
+<th>Todos los distritos</th>
+</tr></thead><tbody>
+<tr>
+<td>Bienestar</td>
+<td><strong>−300 pts</strong> por apagón masivo</td>
+</tr>
+<tr>
+<td>Ingresos industriales</td>
+<td><strong>se anulan ($0)</strong>: no hubo suministro para operar</td>
+</tr>
+<tr>
+<td>Industria apagada antes del fallo</td>
+<td><strong>−$1.000</strong> (paro técnico)</td>
+</tr>
+<tr>
+<td>Costos fijos de red</td>
+<td><strong>se cobran igual</strong>: −$500 y −$300</td>
+</tr>
+<tr>
+<td>Sectores civiles apagados</td>
+<td>se suman sus penalizaciones individuales (−150 / −450)</td>
+</tr>
+<tr>
+<td>Contador global</td>
+<td><strong>+1 apagón</strong></td>
+</tr>
+</tbody></table>
+<p>Ejemplos de una ronda completa, distrito tipo, con industria apagada y sectores civiles encendidos:</p>
+<ul>
+<li>Estable → Bienestar 1.000 → <strong>1.100</strong> (+100); Tesorería 10.000 → <strong>8.200</strong> (−1.800).</li>
+<li>Blackout → Bienestar 1.000 → <strong>700</strong> (−300); Tesorería 10.000 → <strong>9.200</strong> (−800).</li>
+</ul>
+<p>Ese detalle explica la trampa del juego: <strong>el apagón no siempre es lo más caro en caja</strong> (anula ingresos pero no</p>
+<p>paga el paro), pero sí es letal en Bienestar y, con dos, termina la partida para todos.</p>
+<hr/>
+<h2 id="7-las-cuatro-crisis-oficiales">7. Las cuatro crisis oficiales</h2>
+<p>Cada ronda tiene su crisis fija; sobre ella se sortean los incidentes (sección 8).</p>
+<table><thead><tr>
+<th>#</th>
+<th>Crisis</th>
+<th>Contexto</th>
+<th>Efecto exacto</th>
+<th>Conflicto que provoca</th>
+</tr></thead><tbody>
+<tr>
+<td>1</td>
+<td><strong>MANTENIMIENTO DE GASODUCTO TRONCAL</strong> (tutorial)</td>
+<td>Fuga de presión en la válvula regional</td>
+<td>Gas ×0,80 · eléctrico ×1,00</td>
+<td>Basta apagar 1 o 2 industrias: enseña la mecánica sin castigar</td>
+</tr>
+<tr>
+<td>2</td>
+<td><strong>SEQUÍA HIDROLÓGICA EXTREMA</strong></td>
+<td>Embalses en niveles críticos</td>
+<td>Eléctrico ×0,65 · gas ×1,00</td>
+<td>Déficit severo de MW: al menos el 60% de las industrias debe ceder</td>
+</tr>
+<tr>
+<td>3</td>
+<td><strong>ONDA POLAR Y CONGELAMIENTO</strong></td>
+<td>Pico de calefacción y agua caliente</td>
+<td>Demanda residencial ×2 (+120 MW y +250 m³ por distrito)</td>
+<td>El consumo civil se come el margen: mantener industrias es casi imposible sin cortar áreas civiles</td>
+</tr>
+<tr>
+<td>4</td>
+<td><strong>COLAPSO EN CADENA DE SUBESTACIONES</strong></td>
+<td>Fallo sincronizado de alta tensión y baja presión</td>
+<td>Eléctrico ×0,50 · gas ×0,50</td>
+<td>Dilema extremo: todas las industrias fuera y varios distritos con cortes civiles selectivos</td>
+</tr>
+</tbody></table>
+<hr/>
+<h2 id="8-incidentes-aleatorios-la-variación-de-cada-partida">8. Incidentes aleatorios (la variación de cada partida)</h2>
+<p>Sobre la crisis de la ronda se <strong>sortea un número fijo de incidentes</strong>, para que dos partidas no se jueguen igual.</p>
+<p>Los incidentes están agrupados en cinco familias y se muestran en el proyector y en cada mando con sus etiquetas</p>
+<p>de efecto (por ejemplo: <code>ELÉCTRICA −10%</code>, <code>DEMANDA CIVIL x1,15</code>, <code>−$400 A TODOS</code>, <code>SERVICIOS CRÍTICOS BLOQUEADA</code>).</p>
+<h3 id="reglas-del-sorteo">Reglas del sorteo</h3>
+<table><thead><tr>
+<th>Ronda</th>
+<th>Incidentes</th>
+<th>Severidad máxima</th>
+<th>Familias</th>
+</tr></thead><tbody>
+<tr>
+<td>1 (tutorial)</td>
+<td><strong>0</strong></td>
+<td>—</td>
+<td>—</td>
+</tr>
+<tr>
+<td>2</td>
+<td><strong>1</strong></td>
+<td>2</td>
+<td>cualquiera permitida desde la ronda 2</td>
+</tr>
+<tr>
+<td>3</td>
+<td><strong>1</strong></td>
+<td>3</td>
+<td>cualquiera</td>
+</tr>
+<tr>
+<td>4 (final)</td>
+<td><strong>2</strong></td>
+<td>3</td>
+<td><strong>distintas</strong> entre sí</td>
+</tr>
+</tbody></table>
+<ul>
+<li>Un incidente <strong>nunca se repite</strong> dentro de la misma partida (se juegan 4 incidentes distintos, salvo que la</li>
+</ul>
+<p>  partida muera antes).</p>
+<ul>
+<li>El sorteo depende de una <strong>semilla</strong> que el proyector muestra en hexadecimal. Dos salas con la misma semilla</li>
+</ul>
+<p>  juegan exactamente el mismo guion: sirve para repetir una partida o analizarla.</p>
+<ul>
+<li>Se puede fijar la semilla con <code>GAME_SEED</code> y <strong>apagar</strong> la mecánica con <code>INCIDENTS=off</code> (respaldo: vuelve a la</li>
+</ul>
+<p>  aritmética pura del documento, útil si algo se descuadra en clase).</p>
+<h3 id="invariantes-de-balance-verificados-por-pruebas">Invariantes de balance (verificados por pruebas)</h3>
+<ul>
+<li>1. <strong>Nunca se puede ganar sin tocar nada:</strong> con cualquier crisis y cualquier combinación de incidentes, la demanda</li>
+</ul>
+<p>   base supera el techo.</p>
+<ul>
+<li>2. <strong>La ronda siempre tiene salida:</strong> existe al menos un reparto de cortes que salva la red, en cualquier ronda y</li>
+</ul>
+<p>   con cualquier combinación de incidentes (por eso los incidentes de bloqueo solo pueden congelar los críticos).</p>
+<ul>
+<li>3. La prueba <code>ningún sorteo hace la ronda irresoluble ni perdona al que no toca nada</code> recorre 400+ combinaciones</li>
+</ul>
+<p>   (rondas 2–4, paneles de 3 a 6 distritos, todos los pares de incidentes de familias distintas).</p>
+<h3 id="catálogo-completo-19-incidentes">Catálogo completo (19 incidentes)</h3>
+<p><strong>Familia <code>capacity</code> — recortan el techo</strong></p>
+<table><thead><tr>
+<th>Incidente</th>
+<th>Sev.</th>
+<th>Desde</th>
+<th>Efecto</th>
+</tr></thead><tbody>
+<tr>
+<td>Fuga en la línea de distribución</td>
+<td>2</td>
+<td>r2</td>
+<td>Gas −10%</td>
+</tr>
+<tr>
+<td>Torre de enfriamiento al 70%</td>
+<td>2</td>
+<td>r2</td>
+<td>Eléctrica −10%</td>
+</tr>
+<tr>
+<td>Robo de cable en el anillo sur</td>
+<td>2</td>
+<td>r2</td>
+<td>Eléctrica −8% · −$200 a todos</td>
+</tr>
+<tr>
+<td>Turbina 3 fuera de servicio</td>
+<td>3</td>
+<td>r3</td>
+<td>Eléctrica −15%</td>
+</tr>
+<tr>
+<td>Compresor troncal en parada</td>
+<td>3</td>
+<td>r3</td>
+<td>Gas −15%</td>
+</tr>
+</tbody></table>
+<p><strong>Familia <code>demand</code> — suben el consumo</strong></p>
+<table><thead><tr>
+<th>Incidente</th>
+<th>Sev.</th>
+<th>Desde</th>
+<th>Efecto</th>
+</tr></thead><tbody>
+<tr>
+<td>Oleada de calor extrema</td>
+<td>2</td>
+<td>r2</td>
+<td>Demanda residencial ×1,15</td>
+</tr>
+<tr>
+<td>Turno industrial doble por exportación</td>
+<td>2</td>
+<td>r2</td>
+<td>Demanda industrial ×1,20 · +$600 si la industria aguanta</td>
+</tr>
+<tr>
+<td>Traslado masivo al hospital central</td>
+<td>2</td>
+<td>r2</td>
+<td>Demanda crítica ×1,25</td>
+</tr>
+<tr>
+<td>Cadena de frío en alerta sanitaria</td>
+<td>3</td>
+<td>r3</td>
+<td>Demanda residencial ×1,10 · crítica ×1,10</td>
+</tr>
+</tbody></table>
+<p><strong>Familia <code>economy</code> — dinero y bienestar</strong></p>
+<table><thead><tr>
+<th>Incidente</th>
+<th>Sev.</th>
+<th>Desde</th>
+<th>Efecto</th>
+</tr></thead><tbody>
+<tr>
+<td>Subsidio de emergencia del estado</td>
+<td>1</td>
+<td>r2</td>
+<td>+$800 a todos</td>
+</tr>
+<tr>
+<td>Plan de empleo de emergencia</td>
+<td>1</td>
+<td>r2</td>
+<td>+$300 y −40 de Bienestar a todos</td>
+</tr>
+<tr>
+<td>Huelga en la planta de bombeo</td>
+<td>2</td>
+<td>r2</td>
+<td>−$400 a todos · −$400 extra si hay apagón</td>
+</tr>
+<tr>
+<td>Saqueo en los barrios del este</td>
+<td>2</td>
+<td>r2</td>
+<td>−80 de Bienestar a todos · −120 extra si hay apagón</td>
+</tr>
+<tr>
+<td>Auditoría del regulador</td>
+<td>3</td>
+<td>r3</td>
+<td>−$600 a todos · +$900 extra si la red aguanta</td>
+</tr>
+</tbody></table>
+<p><strong>Familia <code>lock</code> — blindan una palanca</strong></p>
+<table><thead><tr>
+<th>Incidente</th>
+<th>Sev.</th>
+<th>Desde</th>
+<th>Efecto</th>
+</tr></thead><tbody>
+<tr>
+<td>Cuarentena en las salas de trauma</td>
+<td>2</td>
+<td>r2</td>
+<td>Servicios críticos bloqueados</td>
+</tr>
+<tr>
+<td>Oxígeno crítico en cuidados intensivos</td>
+<td>3</td>
+<td>r3</td>
+<td>Servicios críticos bloqueados · −$300 a todos</td>
+</tr>
+</tbody></table>
+<p><strong>Familia <code>boost</code> — dan aire</strong></p>
+<table><thead><tr>
+<th>Incidente</th>
+<th>Sev.</th>
+<th>Desde</th>
+<th>Efecto</th>
+</tr></thead><tbody>
+<tr>
+<td>Trasvase de emergencia habilitado</td>
+<td>1</td>
+<td>r2</td>
+<td>Eléctrica +10%</td>
+</tr>
+<tr>
+<td>Buque metanero atracado en puerto</td>
+<td>1</td>
+<td>r2</td>
+<td>Gas +10%</td>
+</tr>
+<tr>
+<td>Mercado spot a precio de ruina</td>
+<td>3</td>
+<td>r3</td>
+<td>Eléctrica +10% · −$700 a todos</td>
+</tr>
+</tbody></table>
+<p>Los efectos de un mismo tipo <strong>se acumulan multiplicativamente</strong> (capacidad y demanda) o <strong>sumándose</strong></p>
+<p>(las partidas en dinero y Bienestar). En la resolución final cada efecto aparece desglosado en el parte del</p>
+<p>distrito, precedido de <code>INCIDENTE //</code>.</p>
+<hr/>
+<h2 id="9-palancas-bloqueadas">9. Palancas bloqueadas</h2>
+<p>Dos incidentes (<code>CUARENTENA...</code> y <code>OXÍGENO CRÍTICO...</code>) <strong>bloquean los servicios críticos</strong> durante esa ronda:</p>
+<ul>
+<li>El mando de la mesa muestra la palanca, pero <strong>no responde</strong>: el servidor rechaza el intento con</li>
+</ul>
+<p>  <code>SERVICIOS CRÍTICOS BLOQUEADA POR INCIDENTE // NO SE PUEDE CORTAR ESTA RONDA</code>.</p>
+<ul>
+<li>El <strong>override del anfitrión</strong> tampoco pasa: el bloqueo es del sistema, no del mando. El corte total de</li>
+</ul>
+<p>  emergencia (SCRAM) también respeta el bloqueo.</p>
+<ul>
+<li>El bloqueo desaparece al empezar la ronda siguiente.</li>
+</ul>
+<p>Consecuencia pedagógica: la mesa que iba a sacrificar al hospital tiene que sacrificar <strong>industria o barrio</strong>, y</p>
+<p>eso reabre la negociación en voz alta. Es el incidente más divertido para el aula.</p>
+<hr/>
+<h2 id="10-fin-de-la-partida-y-puntuación">10. Fin de la partida y puntuación</h2>
+<p><strong>Derrota general (fin inmediato).</strong> Si el contador de apagones llega a <strong>2</strong> en cualquier momento, la red colapsa</p>
+<p>de forma permanente y el proyector cierra con <code>FALLO REGIONAL IRREVERSIBLE — NO HAY GANADORES</code>. La lección: la</p>
+<p>falta de coordinación y el egoísmo corporativo destruyeron la infraestructura común.</p>
+<p><strong>Puntuación de Eficiencia Final (si la red sobrevive las 4 rondas).</strong></p>
+<pre><code>
+PEF = Bienestar final + (Tesorería final / 100)
+</code></pre>
+<ul>
+<li><strong>Primer puesto → Operador de Red Ejemplar.</strong></li>
+<li><strong>Distrito Mártir:</strong> el que más puntos de Bienestar sacrificó apagando sectores para que el salón no colapsara</li>
+</ul>
+<p>  (desempate: más rondas con industria apagada).</p>
+<ul>
+<li><strong>Distrito Parásito:</strong> el que más rondas mantuvo la industria encendida a costa de los cortes de los demás.</li>
+</ul>
+<p>El acta final incluye además la <strong>semilla</strong> y la lista de <strong>incidentes jugados</strong>, para poder repetir o auditar la</p>
+<p>partida.</p>
+<hr/>
+<h2 id="11-partida-de-referencia-con-números-reales">11. Partida de referencia con números reales</h2>
+<p>Salida real del motor (<code>node scripts/reference-game.js --seed 4200</code>), jugando con una estrategia sencilla y</p>
+<p>explicable: cada distrito apaga <strong>el mínimo</strong> que salva la red, empezando por la industria y sin tocar los críticos.</p>
+<pre><code>
+PARTIDA DE REFERENCIA // semilla 4200 // 4 distritos // 5.1
+Capacidad base del panel: 1440 MW y 3000 m3 (igual a la demanda base)
+
+=== RONDA 1 // MANTENIMIENTO DE GASODUCTO TRONCAL (TUTORIAL) ===
+  incidentes: sin incidentes
+  techo: 1440 MW (x1) / 2400 m3 (x0.8)
+  demanda si nadie cede: 1440 MW / 3000 m3
+  plan: cada distrito apaga [IND] -&gt; 180 MW / 350 m3 por distrito
+  total: 720 MW / 1400 m3 contra 1440 MW / 2400 m3
+  RESOLUCIÓN: STABLE // margen 720 MW / 1000 m3
+  distrito tipo: Bienestar 1000 -&gt; 1100 (+100) // Tesorería 10000 -&gt; 8200 (-1800)
+
+=== RONDA 2 // SEQUÍA HIDROLÓGICA EXTREMA (DÉFICIT SEVERO DE MW) ===
+  incidentes: SAQUEO EN LOS BARRIOS DEL ESTE  [-80 BIENESTAR A TODOS · -120 EXTRA SI HAY APAGÓN]
+  techo: 936 MW (x0.65) / 3000 m3 (x1)
+  demanda si nadie cede: 1440 MW / 3000 m3
+  plan: cada distrito apaga [IND] -&gt; 180 MW / 350 m3 por distrito
+  RESOLUCIÓN: STABLE // margen 216 MW / 1600 m3
+  distrito tipo: Bienestar 1100 -&gt; 1120 (+20) // Tesorería 8200 -&gt; 6400 (-1800)
+
+=== RONDA 3 // ONDA POLAR Y CONGELAMIENTO (PICO DE DEMANDA CIVIL) ===
+  incidentes: COMPRESOR TRONCAL EN PARADA  [GAS -15%]
+  techo: 1440 MW (x1) / 2550 m3 (x0.85)
+  demanda si nadie cede: 1920 MW / 4000 m3
+  plan: cada distrito apaga [IND] -&gt; 300 MW / 600 m3 por distrito
+  RESOLUCIÓN: STABLE // margen 240 MW / 150 m3
+  distrito tipo: Bienestar 1120 -&gt; 1200 (+100) // Tesorería 6400 -&gt; 4600 (-1800)
+
+=== RONDA 4 // COLAPSO EN CADENA DE SUBESTACIONES (FINAL) ===
+  incidentes: TORRE DE ENFRIAMIENTO AL 70% [ELÉCTRICA -10%] + BUQUE METANERO ATRACADO EN PUERTO [GAS +10%]
+  techo: 648 MW (x0.45) / 1650 m3 (x0.55)
+  demanda si nadie cede: 1440 MW / 3000 m3
+  plan: cada distrito apaga [IND, RES] -&gt; 60 MW / 100 m3 por distrito
+  RESOLUCIÓN: STABLE // margen 408 MW / 1250 m3
+  distrito tipo: Bienestar 1200 -&gt; 1150 (-50) // Tesorería 4600 -&gt; 2800 (-1800)
+
+=== CLASIFICACIÓN FINAL ===
+  1. NEO-DOWNTOWN: PEF 1178 (Bienestar 1150 + Tesorería 2800/100) // sacrificó 150 de Bienestar // industrias encendidas 0/4
+  ...
+</code></pre>
+<p>Lecturas para clase:</p>
+<ul>
+<li><strong>La ronda 3 es la trampa:</strong> con la onda polar hay que apagar la industria <em>y</em> convivir con 1.920 MW de demanda;</li>
+</ul>
+<p>  el margen de 150 m³ es tan fino que un solo distrito que encienda su industria vuelve al blackout.</p>
+<ul>
+<li><strong>La ronda 4 da mucha holgura en MW (408 MW)</strong>, así que la tentación de reencender industria aparece justo en el</li>
+</ul>
+<p>  último minuto. El incidente <code>TORRE DE ENFRIAMIENTO</code> recorta el techo un 10% adicional y castiga a quien cuente</p>
+<p>  con el margen del documento.</p>
+<ul>
+<li>En un panel simétrico todos los distritos terminan empatados (PEF 1178): el PEF no premia &quot;no perder&quot;, premia</li>
+</ul>
+<p>  <strong>quién aguantó la industria encendida</strong> sin tumbar la red. Ahí está la tensión de verdad.</p>
+<ul>
+<li>Con la estrategia de referencia, <strong>300 de 300 semillas se pueden sobrevivir</strong> (<code>--scan 300</code>): si el salón falla, es</li>
+</ul>
+<p>  por coordinación, no por imposibilidad. Con <code>--scan</code> también se comprueba que los 19 incidentes salen con</p>
+<p>  frecuencia parecida (~50–77 veces en 300 partidas).</p>
+<hr/>
+<h2 id="12-protocolo-técnico-y-configuración">12. Protocolo técnico y configuración</h2>
+<p><strong>Arquitectura: dos runtimes, un motor.</strong></p>
+<pre><code>
+src/shared/rules.js       motor de reglas (CommonJS, sin I/O): demanda, capacidad, sorteo, resolución, PEF
+server.js                 servidor Node para LAN: Next.js + WebSocket autoritativo en el mismo puerto
+worker/index.js           Cloudflare Worker: enruta /ws al Durable Object de la sala y sirve los estáticos
+worker/room.js            Durable Object de una sala: WebSocket Hibernation, alarm() y storage
+src/lib/types.ts          contrato de tipos del cliente + re-exportación de los datos del motor
+src/app/…                 mando (/), proyector (/host), red (/grid), manual (/rules), CRT (/crt)
+tests/…                   motor, partida end-to-end contra Node y contra el Durable Object real
+scripts/reference-game.js partida de referencia sin interfaz (números del manual, barrido de semillas)
+</code></pre>
+<ul>
+<li><strong>Autoridad única:</strong> las mesas solo envían intenciones (<code>TOGGLE_SECTOR</code>, <code>SCRAM</code>); el servidor responde con el</li>
+</ul>
+<p>  estado completo (<code>SYNC_STATE</code>). El proyector necesita la clave maestra para operar.</p>
+<ul>
+<li><strong>Mensajes cliente → servidor:</strong> <code>HOST_OPEN_ROOM</code>, <code>HOST_SEED_DISTRICTS</code>, <code>HOST_REMOVE_UNCLAIMED</code>,</li>
+</ul>
+<p>  <code>HOST_START_GAME</code>, <code>HOST_SKIP_ANNOUNCE</code>, <code>HOST_RESOLVE_NOW</code>, <code>HOST_NEXT_ROUND</code>, <code>HOST_RESET_GAME</code>,</p>
+<p>  <code>HOST_TOGGLE_SECTOR</code>, <code>WATCH_ROOM</code>, <code>JOIN_DISTRICT</code>, <code>LEAVE_DISTRICT</code>, <code>TOGGLE_SECTOR</code>, <code>SCRAM</code>, <code>PING</code>.</p>
+<ul>
+<li><strong>Mensajes servidor → cliente:</strong> <code>SYNC_STATE</code>, <code>JOIN_SUCCESS</code>, <code>JOIN_REJECTED</code>, <code>ROOM_NOT_FOUND</code>,</li>
+</ul>
+<p>  <code>SESSION_EXPIRED</code>, <code>ERROR</code>, <code>ALERT</code>.</p>
+<ul>
+<li><strong>Endpoint de salud:</strong> <code>GET /healthz</code> devuelve versión, salas activas, fase, ronda, apagones, **semilla,</li>
+</ul>
+<p>  incidentes vigentes y palancas bloqueadas** (útil para diagnosticar en vivo).</p>
+<table><thead><tr>
+<th>Variable</th>
+<th>Por defecto</th>
+<th>Descripción</th>
+</tr></thead><tbody>
+<tr>
+<td><code>HOST_PASSCODE</code></td>
+<td><code>1984</code></td>
+<td>Clave maestra del anfitrión. En internet, usa un secreto (<code>wrangler secret put</code>)</td>
+</tr>
+<tr>
+<td><code>ANNOUNCE_SECONDS</code></td>
+<td><code>10</code></td>
+<td>Duración del anuncio de crisis</td>
+</tr>
+<tr>
+<td><code>NEGOTIATION_SECONDS</code></td>
+<td><code>60</code></td>
+<td>Duración de la negociación</td>
+</tr>
+<tr>
+<td><code>PORT</code></td>
+<td><code>3006</code></td>
+<td>Puerto del servidor Node (opción LAN)</td>
+</tr>
+<tr>
+<td><code>GAME_SEED</code></td>
+<td>aleatoria</td>
+<td>Fija la semilla: repite exactamente el mismo guion de incidentes</td>
+</tr>
+<tr>
+<td><code>INCIDENTS</code></td>
+<td><code>on</code></td>
+<td><code>off</code> desactiva los incidentes aleatorios (aritmética pura del documento)</td>
+</tr>
+</tbody></table>
+<hr/>
+<h2 id="13-puesta-en-marcha-lan-y-cloudflare">13. Puesta en marcha (LAN y Cloudflare)</h2>
+<h3 id="opción-a--cloudflare-workers-recomendada-para-clase-cualquier-red-datos-móviles-incluidos">Opción A — Cloudflare Workers (recomendada para clase: cualquier red, datos móviles incluidos)</h3>
+<p>Cada PIN de sala vive en su propio Durable Object: autoridad única, WebSocket nativo, sin servidores que se</p>
+<p>duerman y con el estado persistido (sobrevive a reinicios y despliegues).</p>
+<pre><code>
+npx wrangler login                    # una vez, con tu cuenta de Cloudflare
+npx wrangler secret put HOST_PASSCODE # clave maestra real para internet (no la de por defecto)
+npm run worker:deploy                 # compila la interfaz estática y publica Worker + Durable Objects
+</code></pre>
+<p>Wrangler imprime la URL (<code>https://blackout-grid-collapse.&lt;subdominio&gt;.workers.dev</code>). Proyector: <code>&lt;url&gt;/host/</code>.</p>
+<p>Mandos: <code>&lt;url&gt;/</code> desde cualquier móvil. Prueba local antes de publicar con <code>npm run worker:dev</code></p>
+<p>(workerd en <code>http://127.0.0.1:8788</code>).</p>
+<h3 id="opción-b--lan-sin-internet-servidor-node">Opción B — LAN sin internet (servidor Node)</h3>
+<pre><code>
+npm install          # una vez
+npm run build        # compilación de producción (NO uses build:static para esta opción)
+npm start            # o `npm run dev` para desarrollo
+# Proyector:  http://localhost:3006/host      (clave maestra 1984 o la que fijes)
+# Mandos:     http://&lt;IP-LAN&gt;:3006            (el proyector muestra la URL para los móviles)
+</code></pre>
+<p><strong>Aviso importante de red en Windows + WSL2.</strong> Si el juego corre <em>dentro</em> de WSL (o de un contenedor), los móviles</p>
+<p><strong>no</strong> alcanzan la IP de WSL: el distro está en modo NAT (una red privada detrás de Windows). Verificado en este</p>
+<p>equipo: <code>wslinfo --networking-mode</code> → <code>nat</code>, IP de WSL <code>172.25.x.x</code>, IP de LAN de Windows <code>192.168.40.80</code>. Lo que</p>
+<p><strong>sí</strong> funciona (probado end-to-end) es publicar el puerto desde Docker Desktop, que escucha en <code>0.0.0.0</code> de</p>
+<p>Windows:</p>
+<pre><code>
+cd ~/jarvis-hermes/workspace/laptop-projects/blackout-simulator
+docker run -d --rm --name blackout -p 3006:3006 \
+  -v &quot;$PWD&quot;:/app -w /app --entrypoint node \
+  nousresearch/hermes-agent:latest server.js
+# Mandos:  http://192.168.40.80:3006  (IP de LAN de Windows; compruébala antes con ipconfig)
+</code></pre>
+<p>Alternativas si prefieres no usar Docker: ejecutar Node dentro de WSL (aquí está en</p>
+<p><code>~/.nvm/versions/node/v22.17.1/bin/node</code>) y añadir un <strong>port proxy de Windows</strong> hacia la IP de WSL</p>
+<p>(<code>netsh interface portproxy add v4tov4 listenport=3006 listenaddress=0.0.0.0 connectport=3006 connectaddress=&lt;IP-WSL&gt;</code></p>
+<p>+ regla de firewall entrante), o activar el <strong>modo de red espejo</strong> de WSL2 (<code>.wslconfig</code> →</p>
+<p><code>networkingMode=mirrored</code>, requiere reiniciar WSL). En los tres casos, la prueba real es abrir la URL desde un</p>
+<p>móvil de la misma Wi-Fi.</p>
+<h3 id="comprobación-en-10-segundos">Comprobación en 10 segundos</h3>
+<pre><code>
+curl -s localhost:3006/healthz         # {&quot;ok&quot;:true,&quot;version&quot;:&quot;5.1&quot;,&quot;rooms&quot;:[…]}
+curl -s -o /dev/null -w &quot;%{http_code}\n&quot; http://&lt;IP-LAN&gt;:3006/host/   # 200
+</code></pre>
+<hr/>
+<h2 id="14-verificación-qué-está-probado-y-cómo-repetirlo">14. Verificación: qué está probado y cómo repetirlo</h2>
+<pre><code>
+npm test              # motor + partida completa contra el servidor Node  (35 pruebas)
+npm run test:engine   # solo la aritmética y el sorteo                    (24 pruebas)
+npm run test:worker   # partida completa contra el Durable Object real     (9 pruebas, requiere build:static)
+npm run typecheck     # tsc --noEmit
+node scripts/reference-game.js --scan 300   # balance: ¿tiene salida cada semilla?
+</code></pre>
+<p>Estado verificado de esta versión (5.1):</p>
+<table><thead><tr>
+<th>Suite</th>
+<th>Pruebas</th>
+<th>Qué cubre</th>
+</tr></thead><tbody>
+<tr>
+<td><code>tests/engine.test.js</code></td>
+<td><strong>24/24 ✅</strong></td>
+<td>Tabla de sectores, capacidad, resolución, PEF, sorteo reproducible por semilla, no repetición, bloqueos, economía de incidentes, <strong>irresolubilidad y &quot;no hacer nada nunca salva la red&quot; en 400+ combinaciones</strong></td>
+</tr>
+<tr>
+<td><code>tests/e2e.test.js</code></td>
+<td><strong>11/11 ✅</strong></td>
+<td>Partida completa contra <code>server.js</code> con semilla fija: clave maestra, reclamo de distritos, override del anfitrión, <strong>rechazo de palanca bloqueada (mesa y anfitrión)</strong>, resolución automática, segundo apagón, acta final</td>
+</tr>
+<tr>
+<td><code>tests/worker.e2e.test.js</code></td>
+<td><strong>9/9 ✅</strong></td>
+<td>Lo mismo contra <code>wrangler dev</code> + Durable Objects: aislamiento por PIN, clave dentro del objeto, alarmas, estado persistido</td>
+</tr>
+<tr>
+<td><code>npm run typecheck</code></td>
+<td><strong>✅</strong></td>
+<td>Contrato de tipos del cliente</td>
+</tr>
+<tr>
+<td><code>npm run build</code> / <code>build:static</code></td>
+<td><strong>✅</strong></td>
+<td>Compilación de producción y export estático</td>
+</tr>
+</tbody></table>
+<p>Las salas de prueba van <strong>sin incidentes por defecto</strong> (<code>createRoom(pin, { incidents: false })</code>) para verificar la</p>
+<p>aritmética del documento sin azar; los sorteos se prueban aparte con semillas fijas.</p>
+<hr/>
+<h2 id="15-guion-de-clase-checklist">15. Guion de clase (checklist)</h2>
+<p><strong>La semana antes</strong></p>
+<ul>
+<li>[ ] Decidir la vía: Cloudflare (más simple en el aula) o LAN + Docker.</li>
+<li>[ ] Si es Cloudflare: <code>wrangler login</code>, subir <code>HOST_PASSCODE</code> como secreto y desplegar. Probar desde el móvil.</li>
+<li>[ ] Si es LAN: <code>npm run build</code> y dejar el comando <code>docker run …</code> probado; confirmar la IP de LAN de Windows.</li>
+<li>[ ] Hacer <strong>un ensayo completo</strong> (proyector + 2 móviles) midiendo si 10 s de anuncio y 60 s de negociación son</li>
+</ul>
+<p>      suficientes para tu grupo; si no, ajustar <code>ANNOUNCE_SECONDS</code> / <code>NEGOTIATION_SECONDS</code>.</p>
+<ul>
+<li>[ ] Decidir la semilla (<code>GAME_SEED</code>) si quieres un guion concreto, y <strong>jugarla antes</strong> con</li>
+</ul>
+<p>      <code>node scripts/reference-game.js --seed N</code> para saber qué incidentes salen.</p>
+<p><strong>Minutos antes</strong></p>
+<ul>
+<li>[ ] Proyector: pantalla completa en <code>/host</code>, entrar con la clave maestra y <strong>reservar el panel</strong> (4–6 distritos).</li>
+<li>[ ] Un clic en cualquier parte del proyector (los navegadores exigen un gesto para habilitar el audio).</li>
+<li>[ ] PIN de sala visible para todos (<code>VOLT</code> por defecto); comprobar que el proyector enseña la URL de los mandos.</li>
+<li>[ ] Que cada mesa entre desde su teléfono, escriba su nombre y <strong>tome un distrito</strong>. Los distritos que nadie tome</li>
+</ul>
+<p>      se siguen consumiendo: el anfitrión los opera a mano o los retira de la malla (<code>RETIRAR SIN OPERADOR</code>).</p>
+<ul>
+<li>[ ] Anotar la <strong>semilla</strong> en el tablero (permite repetir la partida con la misma dificultad).</li>
+</ul>
+<p><strong>Durante</strong></p>
+<ul>
+<li>[ ] Leer en voz alta la crisis y los incidentes de la ronda (el proyector los tiene en grande).</li>
+<li>[ ] No interrumpir la negociación: el valor pedagógico está en el grito.</li>
+<li>[ ] Usar <code>RESOLVER AHORA</code> si el acuerdo llegó antes de tiempo.</li>
+<li>[ ] Al acabar: leer el parte distrito por distrito y cerrar con las menciones (Ejemplar, Mártir, Parásito).</li>
+</ul>
+<p><strong>Después</strong></p>
+<ul>
+<li>[ ] Guardar la semilla y la lista de incidentes del acta final: la próxima clase puede repetir exactamente la</li>
+</ul>
+<p>      misma partida y comparar decisiones.</p>
+<hr/>
+<h2 id="16-problemas-conocidos-y-plan-b">16. Problemas conocidos y plan B</h2>
+<table><thead><tr>
+<th>Síntoma</th>
+<th>Causa</th>
+<th>Solución</th>
+</tr></thead><tbody>
+<tr>
+<td>El proyector abre pero rechaza órdenes</td>
+<td>Clave maestra incorrecta</td>
+<td><code>HOST_PASSCODE</code> (por defecto <code>1984</code>); en Cloudflare, el secreto subido</td>
+</tr>
+<tr>
+<td>Los móviles no cargan la página</td>
+<td>WSL en modo NAT / firewall</td>
+<td>Publicar el puerto desde Docker Desktop (ver sección 13) o un port proxy de Windows</td>
+</tr>
+<tr>
+<td>&quot;NO EXISTE UNA SALA CON EL PIN X&quot;</td>
+<td>Nadie ha abierto la sala en el proyector todavía</td>
+<td>El anfitrión entra a <code>/host</code> primero: la sala nace ahí</td>
+</tr>
+<tr>
+<td>La página se ve sin estilos</td>
+<td>Se ejecutó <code>npm run build</code> con <code>npm run dev</code> vivo</td>
+<td>Detén el servidor, construye y arranca otra vez</td>
+</tr>
+<tr>
+<td><code>next: Permission denied</code> al construir</td>
+<td>Copia desde Windows: se perdió el bit de ejecución</td>
+<td><code>npm install</code> o <code>chmod +x node_modules/.bin/*</code></td>
+</tr>
+<tr>
+<td>Wrangler dice que falta su binario</td>
+<td>npm 11 y <code>allow-scripts</code></td>
+<td><code>npm approve-scripts workerd esbuild &amp;&amp; npm rebuild workerd esbuild</code></td>
+</tr>
+<tr>
+<td>Una mesa se queda sin batería a mitad</td>
+<td>—</td>
+<td>Reconecta con el mismo distrito (la sesión se restaura) o el anfitrión opera ese distrito a mano</td>
+</tr>
+<tr>
+<td>Quieres la aritmética del documento sin azar</td>
+<td>—</td>
+<td><code>INCIDENTS=off</code> (Node) o <code>--var INCIDENTS:off</code> (Worker)</td>
+</tr>
+<tr>
+<td>La partida sale rara y quieres auditar</td>
+<td>—</td>
+<td>Semilla en pantalla + <code>node scripts/reference-game.js --seed N</code> reproduce el guion</td>
+</tr>
+</tbody></table>
+<p><strong>Plan B mínimo</strong> si la tecnología falla en plena clase: el proyector muestra <code>/rules</code> (tabla de sectores, crisis y</p>
+<p>castigos) y la clase juega con las cuentas en la pizarra usando exactamente los mismos números de este manual.</p>
+<p>El juego es bueno; la aplicación solo acelera la aritmética.</p></div></body></html>

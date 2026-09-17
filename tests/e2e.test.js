@@ -106,6 +106,47 @@ function teamByDistrict(state, districtId) {
   return Object.values(state.teams).find((t) => t.districtId === districtId) || null;
 }
 
+/** Suma de los efectos económicos de los incidentes vigentes. */
+function incidentSum(state, field) {
+  return (state.incidents || []).reduce((sum, i) => sum + (((i.effects || {})[field]) || 0), 0);
+}
+
+/** Producto de los multiplicadores de demanda de los incidentes vigentes. */
+function incidentDemandFactor(state, sector) {
+  return (state.incidents || []).reduce(
+    (acc, i) => acc * (((i.effects || {}).demand || {})[sector] || 1),
+    1
+  );
+}
+
+/**
+ * Una palanca bloqueada por incidente no se puede cortar: la mesa recibe un
+ * error y el override del anfitrión tampoco pasa.
+ */
+async function assertLocked(host, team, districtId, sector) {
+  const seen = team.errors.length;
+  assert.equal(teamByDistrict(host.state, districtId).sectors[sector], true);
+  team.send({ type: "TOGGLE_SECTOR", sector, state: false });
+  const rejected = await waitFor(() => (team.errors.length > seen ? team.errors[team.errors.length - 1] : null), {
+    label: `${sector} bloqueado para la mesa`,
+  });
+  assert.match(rejected, /BLOQUEADA POR INCIDENTE/);
+  await sleep(200);
+  assert.equal(teamByDistrict(host.state, districtId).sectors[sector], true);
+
+  // El proyector tampoco puede: el incidente es del sistema, no del mando.
+  const target = teamByDistrict(host.state, districtId);
+  const seenHost = host.errors.length;
+  host.send({ type: "HOST_TOGGLE_SECTOR", teamId: target.id, sector, state: false });
+  const rejectedHost = await waitFor(
+    () => (host.errors.length > seenHost ? host.errors[host.errors.length - 1] : null),
+    { label: `${sector} bloqueado para el anfitrión` }
+  );
+  assert.match(rejectedHost, /PALANCA BLOQUEADA POR INCIDENTE/);
+  await sleep(200);
+  assert.equal(teamByDistrict(host.state, districtId).sectors[sector], true);
+}
+
 test("BLACKOUT: GRID COLLAPSE — partida completa end-to-end", async (t) => {
   server = spawn("node", ["server.js"], {
     cwd: path.resolve(__dirname, ".."),
@@ -115,6 +156,9 @@ test("BLACKOUT: GRID COLLAPSE — partida completa end-to-end", async (t) => {
       HOST_PASSCODE: PASSCODE,
       ANNOUNCE_SECONDS: "2",
       NEGOTIATION_SECONDS: "3",
+      // Semilla fija: el sorteo de incidentes es reproducible. El guion de la
+      // semilla 70 está anotado en las pruebas de cada ronda.
+      GAME_SEED: "70",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -260,18 +304,27 @@ test("BLACKOUT: GRID COLLAPSE — partida completa end-to-end", async (t) => {
     assert.equal(host.state.phase, "RESOLUTION");
   });
 
-  await t.test("ronda 2: techo eléctrico al 65% y resolución estable tras ceder carga", async () => {
+  await t.test("ronda 2: la cuarentena bloquea los críticos y la red se estabiliza cediendo industria", async () => {
     host.send({ type: "HOST_NEXT_ROUND" });
     await waitFor(() => host.state.phase === "CRISIS_ANNOUNCE" && host.state.currentRound === 2, {
       label: "anuncio de la ronda 2",
     });
 
+    // Guion de la semilla 70: la crisis 2 (sequía, -35% eléctrico) más el
+    // incidente que bloquea los servicios críticos.
+    assert.deepEqual(host.state.incidents.map((i) => i.id), ["inc-cuarentena"]);
+    assert.equal(host.state.lockedSectors.critical, true);
     assert.equal(host.state.activeCrisis.electricMultiplier, 0.65);
+    // 1440 MW x 0,65 y el gas intacto: la cuarentena no recorta capacidad.
     assert.equal(host.state.capacity.maxMW, 936);
     assert.equal(host.state.capacity.maxGas, 3000);
+    assert.equal(host.state.capacity.electricMultiplier, 0.65);
 
-    // Todas las mesas ceden: las dos humanas por su mando, los otros dos
-    // distritos por override del anfitrión (como una mesa sin teléfono).
+    // Los críticos quedan blindados para todos: ni la mesa ni el anfitrión.
+    await assertLocked(host, teamA, "D-01", "critical");
+
+    // Todas las mesas ceden la industria: las dos humanas por su mando, los
+    // otros dos distritos por override del anfitrión (mesas sin teléfono).
     teamA.send({ type: "TOGGLE_SECTOR", sector: "industry", state: false });
     teamB.send({ type: "TOGGLE_SECTOR", sector: "industry", state: false });
     const d3 = teamByDistrict(host.state, "D-03");
@@ -285,17 +338,20 @@ test("BLACKOUT: GRID COLLAPSE — partida completa end-to-end", async (t) => {
         Object.values(host.state.teams).every((team) => team.sectors.industry === false),
       { label: "las 4 industrias cedidas" }
     );
+    assert.equal(host.state.demand.gas, 4 * (250 + 100));
 
     await waitFor(() => host.state.phase === "RESOLUTION", { label: "resolución de la ronda 2", timeout: 10000 });
     const resolution = host.state.lastResolution;
     assert.equal(resolution.outcome, "STABLE");
-    assert.equal(resolution.marginMW, 216);
+    assert.equal(resolution.marginMW, 936 - 720);
+    assert.deepEqual(resolution.incidents.map((i) => i.id), ["inc-cuarentena"]);
 
     const team = host.state.teams[teamA.teamId];
-    // 700 + 100 estable = 800 de Bienestar; 9200 + 3000 (industria encendida... apagada) ...
     assert.equal(team.sectors.industry, false);
-    assert.equal(team.welfare, 800);
-    assert.equal(team.budget, 9200 - 1000 - 500 - 300);
+    // 700 + 100 de red estable; la cuarentena no toca bienestar ni caja.
+    assert.equal(team.welfare, 700 + 100 + incidentSum(host.state, "welfareAll"));
+    // -1.000 paro técnico -500 red residencial -300 red crítica (+ incidentes).
+    assert.equal(team.budget, 9200 - 1000 - 500 - 300 + incidentSum(host.state, "budgetAll"));
     assert.equal(host.state.blackoutCount, 1);
   });
 
@@ -305,9 +361,17 @@ test("BLACKOUT: GRID COLLAPSE — partida completa end-to-end", async (t) => {
       label: "anuncio de la ronda 3",
     });
 
+    // Guion de la semilla 70: la crisis 3 duplica el consumo civil y el robo de
+    // cable del anillo sur recorta un 8% el techo eléctrico.
+    assert.deepEqual(host.state.incidents.map((i) => i.id), ["inc-anillo"]);
     assert.equal(host.state.activeCrisis.residentialDemandMultiplier, 2);
+    const resFactor = 2 * incidentDemandFactor(host.state, "residential");
+    assert.equal(host.state.demand.mw, 4 * Math.round(180 + 120 * resFactor + 60 * incidentDemandFactor(host.state, "critical")));
+    assert.equal(host.state.demand.gas, 4 * Math.round(400 + 250 * resFactor + 100 * incidentDemandFactor(host.state, "critical")));
     assert.equal(host.state.demand.mw, 1440 + 480);
     assert.equal(host.state.demand.gas, 3000 + 1000);
+    assert.equal(host.state.capacity.maxMW, Math.round(1440 * 0.92));
+    assert.equal(host.state.capacity.maxGas, 3000);
 
     await waitFor(() => host.state.phase === "CRISIS_ACTIVE", { label: "negociación de la ronda 3", timeout: 8000 });
     host.send({ type: "HOST_RESOLVE_NOW" });
@@ -315,7 +379,13 @@ test("BLACKOUT: GRID COLLAPSE — partida completa end-to-end", async (t) => {
 
     assert.equal(host.state.lastResolution.outcome, "BLACKOUT");
     assert.equal(host.state.lastResolution.totalMW, 1920);
+    assert.equal(host.state.lastResolution.totalGas, 4000);
     assert.equal(host.state.blackoutCount, 2);
+    // La semilla y el guion de incidentes quedan registrados en el acta final.
+    assert.equal(host.state.finalResults.seed, 70);
+    assert.deepEqual(host.state.finalResults.incidentsPlayed, host.state.usedIncidentIds);
+    // La partida muere en la ronda 3: solo se jugaron dos incidentes.
+    assert.deepEqual(host.state.usedIncidentIds, ["inc-cuarentena", "inc-anillo"]);
 
     // Segundo apagón: fallo regional irreversible, fin de partida sin ganadores.
     assert.equal(host.state.finalResults.irreversible, true);

@@ -15,6 +15,7 @@ import {
   SECTOR_ORDER,
   SectorKey,
   TeamResolution,
+  incidentTags,
   versionLabel,
 } from "@/lib/types";
 
@@ -397,28 +398,32 @@ function HostConsole({
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 font-data text-xs">
               <div className="bg-surface-container-lowest/80 p-2.5 rounded-lg border border-surface-container-high">
-                <span className="text-outline text-[10px] uppercase block">Capacidad eléctrica</span>
+                <span className="text-outline text-[10px] uppercase block">
+                  Capacidad eléctrica {capacity && capacity.electricMultiplier !== 1 ? "(crisis + incidentes)" : ""}
+                </span>
                 <span className="text-primary font-bold">
                   {capacity?.maxMW} MW
-                  {crisis.electricMultiplier !== 1 && (
+                  {capacity && capacity.electricMultiplier !== 1 && (
                     <span className="text-error">
                       {" "}
-                      {`(${crisis.electricMultiplier < 1 ? "-" : "+"}${Math.round(
-                        Math.abs(1 - crisis.electricMultiplier) * 100
+                      {`(${capacity.electricMultiplier < 1 ? "-" : "+"}${Math.round(
+                        Math.abs(1 - capacity.electricMultiplier) * 100
                       )}%)`}
                     </span>
                   )}
                 </span>
               </div>
               <div className="bg-surface-container-lowest/80 p-2.5 rounded-lg border border-surface-container-high">
-                <span className="text-outline text-[10px] uppercase block">Capacidad de gas</span>
+                <span className="text-outline text-[10px] uppercase block">
+                  Capacidad de gas {capacity && capacity.gasMultiplier !== 1 ? "(crisis + incidentes)" : ""}
+                </span>
                 <span className="text-secondary font-bold">
                   {capacity?.maxGas} m3
-                  {crisis.gasMultiplier !== 1 && (
+                  {capacity && capacity.gasMultiplier !== 1 && (
                     <span className="text-error">
                       {" "}
-                      {`(${crisis.gasMultiplier < 1 ? "-" : "+"}${Math.round(
-                        Math.abs(1 - crisis.gasMultiplier) * 100
+                      {`(${capacity.gasMultiplier < 1 ? "-" : "+"}${Math.round(
+                        Math.abs(1 - capacity.gasMultiplier) * 100
                       )}%)`}
                     </span>
                   )}
@@ -435,6 +440,55 @@ function HostConsole({
             </div>
 
             <p className="font-data text-[11px] text-on-surface-variant mt-2 italic">// {crisis.objective}</p>
+          </div>
+        )}
+
+        {/* Incidentes aleatorios de la ronda */}
+        {(roomState?.incidents?.length ?? 0) > 0 && (
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between px-1 font-data text-[11px] uppercase tracking-widest flex-wrap gap-2">
+              <span className="text-warning-amber flex items-center gap-1.5 font-bold">
+                <span className="material-symbols-outlined text-[16px] animate-pulse">bolt</span>
+                // Incidentes sorteados: {roomState?.incidents?.length} // semilla 0x
+                {(roomState?.seed ?? 0).toString(16).toUpperCase().padStart(8, "0")}
+              </span>
+              <span className="text-outline">un incidente no se repite en toda la partida</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {(roomState?.incidents || []).map((incident) => (
+                <div
+                  key={incident.id}
+                  className="bg-surface-container-lowest border border-warning-amber/50 rounded-xl p-3 flex flex-col gap-1.5"
+                >
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className="flex items-center gap-1.5 font-data text-[10px] text-warning-amber font-bold uppercase tracking-widest">
+                      <span className="material-symbols-outlined text-[16px]">{incident.icon}</span>
+                      {incident.tagline}
+                    </span>
+                    <span className="font-data text-[10px] text-outline uppercase">{incident.hexCode}</span>
+                  </div>
+                  <span className="font-headline text-base sm:text-lg text-on-surface font-bold uppercase tracking-tight leading-tight">
+                    {incident.name}
+                  </span>
+                  <p className="font-data text-[11px] text-on-surface-variant leading-relaxed">
+                    {incident.description}
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {incidentTags(incident).map((tag) => (
+                      <span
+                        key={tag}
+                        className="font-data text-[10px] bg-warning-amber/10 text-warning-amber border border-warning-amber/40 px-1.5 py-0.5 rounded uppercase font-bold"
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                  <span className="font-data text-[10px] text-on-surface-variant italic">
+                    // {incident.objective}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 

@@ -10,8 +10,16 @@ const assert = require("node:assert/strict");
 
 const rules = require("../src/shared/rules.js");
 
-function makeRoom(districts = 4, { claimed = true } = {}) {
-  const room = rules.createRoom("TEST");
+/** Semilla fija de las pruebas: los sorteos son reproducibles. */
+const DOC_SEED = 0x5eed1234;
+
+/**
+ * Sala de pruebas. Por defecto SIN incidentes: estas pruebas verifican la
+ * aritmética del documento §3-§7, que no depende del azar. La semilla se fija
+ * para que el sorteo (cuando se activa) sea reproducible.
+ */
+function makeRoom(districts = 4, { claimed = true, incidents = false, seed = DOC_SEED } = {}) {
+  const room = rules.createRoom("TEST", { seed, incidents });
   for (let i = 0; i < districts; i += 1) {
     const district = rules.DISTRICTS[i];
     const team = rules.createDistrictTeam({
@@ -380,4 +388,220 @@ test("fases del ciclo de ronda", () => {
   assert.equal(room.timerRunning, false);
   assert.equal(room.phase, "RESOLUTION");
   assert.equal(room.lastResolution.round, 1);
+});
+// ---------------------------------------------------------------------------
+// Incidentes aleatorios (variación de ronda)
+// ---------------------------------------------------------------------------
+
+/** Producto de los multiplicadores de capacidad/demanda de los incidentes. */
+function incidentProduct(incidents, path) {
+  return incidents.reduce((acc, incident) => {
+    const value = path(incident.effects || {});
+    return acc * (value === undefined ? 1 : value);
+  }, 1);
+}
+
+/** Demanda esperada del panel completo (todos los sectores encendidos). */
+function expectedFullDemand(room, n) {
+  const crisis = room.activeCrisis;
+  const ind = incidentProduct(room.incidents, (e) => (e.demand || {}).industry);
+  const res = incidentProduct(room.incidents, (e) => (e.demand || {}).residential);
+  const crit = incidentProduct(room.incidents, (e) => (e.demand || {}).critical);
+  const resCrisis = crisis.residentialDemandMultiplier || 1;
+
+  return {
+    mw: n * Math.round(180 * ind + 120 * res * resCrisis + 60 * crit),
+    gas: n * Math.round(400 * ind + 250 * res * resCrisis + 100 * crit),
+  };
+}
+
+test("el pool de incidentes tiene las cinco familias y severidades crecientes", () => {
+  const families = new Set(rules.INCIDENT_POOL.map((i) => i.family));
+
+  assert.deepEqual([...families].sort(), ["boost", "capacity", "demand", "economy", "lock"]);
+  assert.ok(rules.INCIDENT_POOL.length >= 15);
+
+  for (const incident of rules.INCIDENT_POOL) {
+    assert.ok([1, 2, 3].includes(incident.severity), `severidad inválida en ${incident.id}`);
+    assert.ok(incident.minRound >= 2, `${incident.id} no puede salir en la ronda tutorial`);
+    const effects = rules.incidentEffects(incident);
+    // Solo se bloquean cargas críticas: el salón siempre conserva una palanca
+    // para repartirse el recorte.
+    for (const key of effects.lockSectors) {
+      assert.equal(key, "critical", `${incident.id} bloquea ${key} y rompe la resolubilidad`);
+    }
+  }
+});
+
+test("la ronda 1 es tutorial: nunca sortea incidentes", () => {
+  for (let seed = 1; seed <= 200; seed += 1) {
+    const room = makeRoom(4, { incidents: true, seed });
+    rules.startRound(room, 1);
+    assert.deepEqual(room.incidents, []);
+    assert.deepEqual(room.lockedSectors, { industry: false, residential: false, critical: false });
+  }
+});
+
+test("el sorteo es reproducible por semilla y no repite incidentes en la partida", () => {
+  const scriptOf = (seed) => {
+    const room = makeRoom(4, { incidents: true, seed });
+    const rounds = [];
+    for (let round = 1; round <= 4; round += 1) {
+      rules.startRound(room, round);
+      rounds.push(room.incidents.map((i) => i.id));
+      rules.resolveRound(room);
+    }
+    return { rounds, used: room.usedIncidentIds };
+  };
+
+  const first = scriptOf(1234);
+  const again = scriptOf(1234);
+  assert.deepEqual(first, again, "la misma semilla debe jugar el mismo guion");
+
+  assert.equal(first.rounds[1].length, 1, "ronda 2: un incidente");
+  assert.equal(first.rounds[2].length, 1, "ronda 3: un incidente");
+  assert.equal(first.rounds[3].length, 2, "ronda 4: dos incidentes");
+
+  const flat = first.rounds.flat();
+  assert.equal(new Set(flat).size, flat.length, "un incidente no se repite en la partida");
+  assert.equal(flat.length, 4);
+
+  // Y con otra semilla el guion cambia.
+  const other = scriptOf(987654);
+  assert.notDeepEqual(other.rounds, first.rounds);
+});
+
+test("los incidentes entran en el techo y en la demanda con la crisis vigente", () => {
+  const room = makeRoom(4, { incidents: true, seed: 777 });
+  rules.startRound(room, 2);
+
+  assert.ok(room.incidents.length > 0);
+
+  const n = Object.keys(room.teams).length;
+  const electric = incidentProduct(room.incidents, (e) => e.electricMultiplier);
+  const gas = incidentProduct(room.incidents, (e) => e.gasMultiplier);
+  const crisis = room.activeCrisis;
+
+  assert.equal(room.capacity.maxMW, Math.round(360 * n * crisis.electricMultiplier * electric));
+  assert.equal(room.capacity.maxGas, Math.round(750 * n * crisis.gasMultiplier * gas));
+  assert.equal(room.capacity.electricMultiplier, Math.round(crisis.electricMultiplier * electric * 100) / 100);
+
+  const expected = expectedFullDemand(room, n);
+  assert.equal(room.demand.mw, expected.mw);
+  assert.equal(room.demand.gas, expected.gas);
+});
+
+test("un incidente de bloqueo impide cortar servicios críticos y deja las palancas encendidas", () => {
+  const room = makeRoom(4, { incidents: true, seed: 4242 });
+  rules.startRound(room, 3);
+  room.incidents = [rules.incidentById("inc-cuarentena")];
+  room.lockedSectors = rules.emptyLockedSectors();
+  for (const key of rules.incidentMultipliers(room.incidents).lockSectors) room.lockedSectors[key] = true;
+  room.capacity = rules.regionalCapacity(4, room.activeCrisis, room.incidents);
+
+  assert.equal(rules.isSectorLocked(room, "critical"), true);
+  assert.equal(rules.isSectorLocked(room, "industry"), false);
+  assert.equal(rules.isSectorLocked(room, "residential"), false);
+  assert.equal(rules.incidentTags(room.incidents[0]).includes("SERVICIOS CRÍTICOS BLOQUEADA"), true);
+
+  // El bloqueo no toca la aritmética: solo restringe lo que se puede apagar.
+  const before = room.demand.mw;
+  const teams = Object.values(room.teams);
+  for (const team of teams) team.sectors.industry = false;
+  rules.recomputeDerived(room);
+  assert.ok(room.demand.mw < before);
+});
+
+test("la economía de los incidentes se cobra en la resolución", () => {
+  // HUELGA: -$400 a todos y -$400 extra si hay apagón.
+  const room = makeRoom(4, { incidents: true, seed: 99 });
+  rules.startRound(room, 2);
+  room.incidents = [rules.incidentById("inc-huelga")];
+  room.capacity = rules.regionalCapacity(4, room.activeCrisis, room.incidents);
+
+  const result = rules.resolveRound(room);
+  const team = result.teamResults[0];
+
+  assert.equal(result.outcome, "BLACKOUT");
+  assert.equal(team.welfareDelta, rules.BLACKOUT_WELFARE_HIT);
+  // Apagón: ingresos industriales anulados ($0) + -500 red residencial + -300 red
+  // crítica + -400 del incidente + -400 extra del incidente por apagón.
+  assert.equal(team.budgetDelta, -1600);
+
+  // SUBSIDIO: +$800 y sin golpe extra (red estable).
+  const room2 = makeRoom(4, { incidents: true, seed: 99 });
+  rules.startRound(room2, 2);
+  room2.incidents = [rules.incidentById("inc-subsidio"), rules.incidentById("inc-trasvase")];
+  room2.capacity = rules.regionalCapacity(4, room2.activeCrisis, room2.incidents);
+  for (const t of Object.values(room2.teams)) {
+    t.sectors = { industry: false, residential: true, critical: true };
+  }
+  rules.recomputeDerived(room2);
+  const stable = rules.resolveRound(room2);
+
+  assert.equal(stable.outcome, "STABLE");
+  const stableTeam = stable.teamResults[0];
+  assert.equal(stableTeam.welfareDelta, rules.STABLE_WELFARE_BONUS);
+  // -1.000 paro + -500 + -300 + 800 del subsidio
+  assert.equal(stableTeam.budgetDelta, -1000);
+  assert.equal(stable.incidents.length, 2);
+});
+
+test("ningún sorteo hace la ronda irresoluble ni perdona al que no toca nada", () => {
+  const pool = rules.INCIDENT_POOL;
+
+  /** Mejor corte posible: los distritos son simétricos, basta evaluar 8 subconjuntos. */
+  function feasibleCuts(crisis, incidents, n) {
+    const locks = rules.incidentMultipliers(incidents).lockSectors;
+    const cap = rules.regionalCapacity(n, crisis, incidents);
+    const cuts = [];
+
+    for (let mask = 0; mask < 8; mask += 1) {
+      const sectors = { industry: !!(mask & 1), residential: !!(mask & 2), critical: !!(mask & 4) };
+      if (locks.some((key) => !sectors[key])) continue;
+      const demand = rules.districtDemand(sectors, crisis, incidents);
+      if (demand.mw * n <= cap.maxMW && demand.gas * n <= cap.maxGas) {
+        cuts.push({ sectors, mw: demand.mw * n, gas: demand.gas * n });
+      }
+    }
+
+    return { cap, cuts };
+  }
+
+  const combos = [];
+  for (const incident of pool) combos.push([incident]);
+  for (let i = 0; i < pool.length; i += 1) {
+    for (let j = i + 1; j < pool.length; j += 1) {
+      // El sorteo real nunca repite familia en la misma ronda.
+      if (pool[i].family !== pool[j].family) combos.push([pool[i], pool[j]]);
+    }
+  }
+
+  let checked = 0;
+  for (const round of [1, 2, 3, 4]) {
+    const crisis = rules.crisisForRound(round);
+    for (const n of [3, 4, 5, 6]) {
+      const usable = crisis ? combos : [];
+      for (const incidents of usable) {
+        const { cap, cuts } = feasibleCuts(crisis, incidents, n);
+        const full = rules.districtDemand(rules.emptySectors(true), crisis, incidents);
+
+        // 1) La red arranca sin margen: no decidir nada siempre es un apagón.
+        assert.ok(
+          full.mw * n > cap.maxMW || full.gas * n > cap.maxGas,
+          `ronda ${round}, ${n} distritos, ${incidents.map((i) => i.id)}: no tocar nada salvaba la red`
+        );
+
+        // 2) Siempre existe un reparto que salva la red.
+        assert.ok(
+          cuts.length > 0,
+          `ronda ${round}, ${n} distritos, ${incidents.map((i) => i.id)}: ronda irresoluble`
+        );
+
+        checked += 1;
+      }
+    }
+  }
+
+  assert.ok(checked > 400, `se esperaban cientos de combinaciones, se revisaron ${checked}`);
 });

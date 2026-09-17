@@ -127,6 +127,10 @@ test("Blackout en Cloudflare Workers + Durable Objects", async (t) => {
       "ANNOUNCE_SECONDS:2",
       "--var",
       "NEGOTIATION_SECONDS:3",
+      // Semilla fija: mismo guion de incidentes que en la prueba del servidor
+      // Node (ronda 2 = cuarentena, que no recorta capacidad).
+      "--var",
+      "GAME_SEED:70",
     ],
     { cwd: ROOT, detached: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" } }
   );
@@ -243,6 +247,10 @@ test("Blackout en Cloudflare Workers + Durable Objects", async (t) => {
       label: "anuncio de la ronda 2",
     });
     assert.equal(host.state.capacity.maxMW, 936);
+    // El Durable Object sortea los mismos incidentes que el servidor Node:
+    // mismo motor (`src/shared/rules.js`) para los dos runtimes.
+    assert.deepEqual(host.state.incidents.map((i) => i.id), ["inc-cuarentena"]);
+    assert.equal(host.state.lockedSectors.critical, true);
 
     await waitFor(() => host.state.phase === "CRISIS_ACTIVE", { label: "negociación de la ronda 2", timeout: 12000 });
     host.send({ type: "HOST_RESOLVE_NOW" });

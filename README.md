@@ -12,7 +12,13 @@ La estética es retro-futurista CRT-punk (scanlines, curvatura de tubo, fósforo
 sintetizador Web Audio procedural).
 
 Reglas completas (tabla de sectores, castigos, pool de crisis y criterios de victoria) en la propia aplicación,
-en `/rules`; provienen de la nota de Obsidian *Juego - NFI*.
+en `/rules`; provienen de la nota de Obsidian *Juego - NFI*. El manual largo para quien opera el juego (aritmética
+exacta, catálogo de incidentes, montaje en el aula y checklist de clase) está en
+[`docs/manual-del-juego.md`](docs/manual-del-juego.md).
+
+Cada partida sortea además **incidentes aleatorios** sobre la crisis de la ronda (19 sucesos en cinco familias:
+techo, demanda, economía, bloqueo de palancas y alivio), de forma que dos partidas nunca se juegan igual. El
+sorteo es reproducible por semilla y está garantizado que ninguna combinación hace la ronda irresoluble.
 
 ---
 
@@ -57,6 +63,8 @@ pregunta si quieres registrar un subdominio `workers.dev`: acepta y elige el que
 | `ANNOUNCE_SECONDS` | `10` | Duración del anuncio de crisis. |
 | `NEGOTIATION_SECONDS` | `60` | Duración de la negociación (el documento fija 60 s). |
 | `PORT` | `3006` | Puerto del servidor Node (opción A). |
+| `GAME_SEED` | aleatoria | Fija la semilla del sorteo de incidentes: repite el mismo guion de partida. |
+| `INCIDENTS` | `on` | `off` desactiva los incidentes y deja la aritmética pura del documento (respaldo). |
 
 En Cloudflare se pasan como `vars` en `wrangler.jsonc` o con `--var CLAVE:valor` al desplegar:
 
@@ -96,7 +104,10 @@ Cada distrito: 1.000 pts de Bienestar (0–1.200), $10.000 de tesorería y tres 
 La capacidad regional de cada ronda es igual a la demanda base del panel (360 MW / 750 m³ por distrito): **la red
 arranca sin margen**, y la crisis aplica sus multiplicadores — gas -20% (ronda 1), eléctrica -35% (ronda 2),
 demanda residencial x2 (ronda 3) y ambas capacidades -50% (ronda 4). Con 4 distritos el techo base es
-1.440 MW / 3.000 m³, igual que en el documento.
+1.440 MW / 3.000 m³, igual que en el documento. Los **incidentes aleatorios** multiplican (o suman) sobre eso:
+ronda 1 sin incidentes, ronda 2 y 3 con uno, ronda 4 con dos de familias distintas, y ninguno se repite en la
+partida. Dos de ellos pueden **bloquear los servicios críticos** durante una ronda: el servidor rechaza el corte
+tanto desde el mando de la mesa como desde el override del anfitrión (el SCRAM también los respeta).
 
 ---
 
@@ -114,8 +125,10 @@ src/lib/useSocket.ts      Conexión (reconexión, heartbeat, PIN en la URL, cuen
 src/app/page.tsx          Mando de distrito (móvil)
 src/app/host/page.tsx     Proyector del anfitrión (host autorizado por el servidor)
 src/app/grid/page.tsx     Visión general de la red (topología, osciloscopio, reserva girante)
-src/app/rules/page.tsx    Manual de reglas para el aula
-tests/engine.test.js      Aritmética del documento (node:test)
+src/app/rules/page.tsx    Manual de reglas para el aula (sectores, crisis e incidentes)
+docs/manual-del-juego.md  Manual completo: reglas, aritmética, guion de clase y montaje
+scripts/reference-game.js Partida de referencia sin interfaz + barrido de semillas (balance)
+tests/engine.test.js      Aritmética del documento y del sorteo de incidentes (node:test)
 tests/e2e.test.js         Partida completa contra el servidor Node (puerto 3999)
 tests/worker.e2e.test.js  Partida completa contra wrangler dev (Durable Objects)
 ```
@@ -144,12 +157,19 @@ Servidor → cliente: `SYNC_STATE`, `JOIN_SUCCESS`, `JOIN_REJECTED`, `ROOM_NOT_F
 ## Pruebas
 
 ```bash
-npm test              # motor + partida completa contra el servidor Node
-npm run test:engine   # solo la aritmética del documento
-npm run test:worker   # partida completa contra el Worker real (necesita `npm run build:static`)
+npm test              # motor + partida completa contra el servidor Node   (35 pruebas)
+npm run test:engine   # solo la aritmética y el sorteo de incidentes      (24 pruebas)
+npm run test:worker   # partida completa contra el Worker real            (9 pruebas, necesita build:static)
 npm run typecheck     # tsc --noEmit
-curl localhost:3006/healthz   # servidor Node: salas activas, fase, ronda y apagones
+curl localhost:3006/healthz   # salas activas, fase, ronda, apagones, semilla, incidentes y bloqueos
+node scripts/reference-game.js --seed 4200   # juega una partida sin interfaz (números del manual)
+node scripts/reference-game.js --scan 300    # balance: ¿tiene salida cada semilla?
 ```
+
+Las pruebas del motor corren **sin incidentes** (`createRoom(pin, { incidents: false })`) porque verifican la
+aritmética del documento; el sorteo, los bloqueos y la economía de los incidentes se prueban aparte, con semillas
+fijas, incluida una prueba que recorre más de 400 combinaciones para demostrar que ninguna ronda queda sin salida
+y que no decidir nunca salva la red.
 
 `tests/worker.e2e.test.js` levanta `wrangler dev` y verifica, además de la partida: que cada PIN es una sala
 aislada en su propio Durable Object, que la clave maestra se valida dentro del objeto, que las fases avanzan por

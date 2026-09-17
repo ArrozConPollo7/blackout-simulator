@@ -63,7 +63,7 @@ function logResolution(room, result, prefix = "") {
 /** En el vestíbulo la capacidad sigue el tamaño del panel. */
 function refreshDerived(room) {
   if (room.phase === "LOBBY" || room.phase === "GAME_OVER") {
-    room.capacity = rules.regionalCapacity(rules.districtCount(room), room.activeCrisis);
+    room.capacity = rules.regionalCapacity(rules.districtCount(room), room.activeCrisis, room.incidents);
   }
   rules.recomputeDerived(room);
 }
@@ -85,12 +85,20 @@ export class RoomDurableObject {
     return normalizePin(this.ctx.id.name || "VOLT") || "VOLT";
   }
 
+  /** Opciones de sala: semilla fija opcional y respaldo para apagar incidentes. */
+  roomOptions() {
+    return {
+      seed: intEnv(this.env.GAME_SEED, undefined),
+      incidents: String(this.env.INCIDENTS || "on").toLowerCase() !== "off",
+    };
+  }
+
   async loadRoom() {
     if (this.room) return this.room;
 
     let room = await this.ctx.storage.get("room");
     if (!room) {
-      room = rules.createRoom(this.pin);
+      room = rules.createRoom(this.pin, this.roomOptions());
       room.announceSeconds = intEnv(this.env.ANNOUNCE_SECONDS, rules.ANNOUNCE_SECONDS);
       room.negotiationSeconds = intEnv(this.env.NEGOTIATION_SECONDS, rules.NEGOTIATION_SECONDS);
       await this.ctx.storage.put("room", room);
@@ -179,7 +187,19 @@ export class RoomDurableObject {
 
     if (url.pathname === "/room") {
       const room = await this.loadRoom();
-      return Response.json({ pin: room.pin, phase: room.phase, round: room.currentRound, teams: Object.keys(room.teams).length, blackouts: room.blackoutCount }, { headers: { "cache-control": "no-store" } });
+      return Response.json(
+        {
+          pin: room.pin,
+          phase: room.phase,
+          round: room.currentRound,
+          teams: Object.keys(room.teams).length,
+          blackouts: room.blackoutCount,
+          seed: room.seed,
+          incidents: (room.incidents || []).map((i) => i.id),
+          locked: Object.keys(room.lockedSectors || {}).filter((k) => room.lockedSectors[k]),
+        },
+        { headers: { "cache-control": "no-store" } }
+      );
     }
 
     if (request.headers.get("Upgrade") !== "websocket") {
@@ -281,6 +301,7 @@ export class RoomDurableObject {
         }
         const crisis = rules.startRound(room, 1);
         addLog(room, "ALERT", `RONDA 01 INICIADA // ${crisis.name} // ANUNCIO EN ${room.announceSeconds}s`);
+        for (const line of rules.incidentLogLines(room)) addLog(room, line.type, line.message);
         refreshDerived(room);
         await this.commit();
         return;
@@ -310,6 +331,7 @@ export class RoomDurableObject {
         if (room.currentRound < room.totalRounds) {
           const crisis = rules.startRound(room, room.currentRound + 1);
           addLog(room, "ALERT", `RONDA 0${room.currentRound} INICIADA // ${crisis.name}`);
+          for (const line of rules.incidentLogLines(room)) addLog(room, line.type, line.message);
         } else {
           room.finalResults = rules.finalResults(room, { irreversible: false });
           room.phase = "GAME_OVER";
@@ -325,7 +347,7 @@ export class RoomDurableObject {
       case "HOST_RESET_GAME": {
         if (!meta.isHost) return;
         const pin = room.pin;
-        this.room = rules.createRoom(pin);
+        this.room = rules.createRoom(pin, this.roomOptions());
         this.room.announceSeconds = intRoomSeconds(room, "announceSeconds", this.env, "ANNOUNCE_SECONDS");
         this.room.negotiationSeconds = intRoomSeconds(room, "negotiationSeconds", this.env, "NEGOTIATION_SECONDS");
         addLog(this.room, "HOST", "SIMULACIÓN REINICIADA POR EL ANFITRIÓN // VESTÍBULO LISTO");
@@ -346,6 +368,10 @@ export class RoomDurableObject {
         const team = room.teams[msg.teamId];
         const spec = rules.SECTOR_SPECS[msg.sector];
         if (!team || !spec) return;
+        if (rules.isSectorLocked(room, msg.sector)) {
+          this.send(ws, { type: "ERROR", message: `PALANCA BLOQUEADA POR INCIDENTE: ${spec.label}` });
+          return;
+        }
         team.sectors[msg.sector] = !!msg.state;
         addLog(room, "HOST", `OVERRIDE DE ANFITRIÓN: ${team.name} -> ${spec.label} ${msg.state ? "ENCENDIDA" : "APAGADA"}`);
         refreshDerived(room);
@@ -458,6 +484,13 @@ export class RoomDurableObject {
           this.send(ws, { type: "ERROR", message: "SIMULACIÓN CERRADA // RED IRRECUPERABLE" });
           return;
         }
+        if (rules.isSectorLocked(room, msg.sector)) {
+          this.send(ws, {
+            type: "ERROR",
+            message: `${spec.label} BLOQUEADA POR INCIDENTE // NO SE PUEDE CORTAR ESTA RONDA`,
+          });
+          return;
+        }
         team.sectors[msg.sector] = !!msg.state;
         addLog(room, "TEAM", `${team.name}: ${spec.label} ${msg.state ? "ENCENDIDA" : "APAGADA"}`);
         refreshDerived(room);
@@ -470,6 +503,9 @@ export class RoomDurableObject {
         const team = teamId ? room.teams[teamId] : null;
         if (!team || room.phase === "GAME_OVER") return;
         team.sectors = rules.emptySectors(false);
+        for (const key of rules.SECTOR_ORDER) {
+          if (rules.isSectorLocked(room, key)) team.sectors[key] = true;
+        }
         addLog(room, "ALERT", `¡CORTE TOTAL DE EMERGENCIA EN ${team.name}! TODOS LOS ALIMENTADORES ABIERTOS`);
         refreshDerived(room);
         await this.commit();
