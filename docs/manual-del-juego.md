@@ -437,6 +437,18 @@ Wrangler imprime la URL (`https://blackout-grid-collapse.<subdominio>.workers.de
 Mandos: `<url>/` desde cualquier móvil. Prueba local antes de publicar con `npm run worker:dev`
 (workerd en `http://127.0.0.1:8788`).
 
+**Dominio propio.** No hay que tocar código: la interfaz se resuelve contra `window.location` (el socket pasa a
+`wss://` en https) y la URL de los mandos es el origen del proyector. Con la zona del dominio en la misma cuenta
+de Cloudflare, se añade un *Custom Domain* en el dashboard (Worker → *Settings* → *Domains & Routes* → *Add* →
+`juego.tudominio.com`) o se declara en `wrangler.jsonc`:
+
+```jsonc
+"routes": [{ "pattern": "juego.tudominio.com", "custom_domain": true }]
+```
+
+y se vuelve a desplegar (`npm run worker:deploy`). El certificado TLS es automático y el `workers.dev` sigue
+funcionando en paralelo. Redesplegar no pierde la partida en curso: el estado vive en el Durable Object.
+
 ### Opción B — LAN sin internet (servidor Node)
 
 ```bash

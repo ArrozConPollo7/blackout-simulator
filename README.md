@@ -55,6 +55,29 @@ pregunta si quieres registrar un subdominio `workers.dev`: acepta y elige el que
 - Mando: `https://<tu-url>/` desde el móvil, en cualquier red.
 - En local, para probar antes de publicar: `npm run worker:dev` (levanta workerd en `http://127.0.0.1:8788`).
 
+### Dominio propio (opcional)
+
+El proyecto no tiene rutas ni hosts fijos: la interfaz se resuelve contra `window.location` (el socket cambia a
+`wss://` solo cuando la página va por https) y la URL que el proyector enseña a los móviles es su propio origen.
+Es decir, **no hay que tocar código**: basta con atar el Worker al dominio.
+
+1. **Requisito:** la zona del dominio tiene que estar en la **misma cuenta de Cloudflare** (nameservers del
+   registrador apuntando a Cloudflare).
+2. **Dashboard:** Worker `blackout-grid-collapse` → *Settings* → *Domains & Routes* → *Add* → *Custom Domain* →
+   `juego.tudominio.com`.
+3. **O en configuración** (queda versionado y lo aplica el mismo despliegue):
+
+   ```jsonc
+   "routes": [{ "pattern": "juego.tudominio.com", "custom_domain": true }]
+   ```
+
+   y después `npm run worker:deploy`. El certificado TLS lo emite Cloudflare solo (Universal SSL), sin costo extra.
+
+El `workers.dev` sigue funcionando en paralelo (mismo Worker, dos puertas). Redesplegar no pierde partidas en
+curso: el estado vive en el Durable Object de cada sala. Si el dominio está en otro proveedor de DNS y no quieres
+mover la zona, la alternativa es un CNAME a `<worker>.<subdominio>.workers.dev`, pero ahí el certificado y el
+enrutado los gobierna ese proveedor: la vía soportada es el Custom Domain.
+
 ### Variables de entorno
 
 | Variable | Por defecto | Descripción |
