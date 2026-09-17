@@ -195,6 +195,7 @@ export class RoomDurableObject {
           teams: Object.keys(room.teams).length,
           blackouts: room.blackoutCount,
           seed: room.seed,
+          paused: Boolean(room.paused),
           incidents: (room.incidents || []).map((i) => i.id),
           locked: Object.keys(room.lockedSectors || {}).filter((k) => room.lockedSectors[k]),
         },
@@ -310,15 +311,55 @@ export class RoomDurableObject {
           return;
         }
         const crisis = rules.startRound(room, 1);
-        addLog(room, "ALERT", `RONDA 01 INICIADA // ${crisis.name} // ANUNCIO EN ${room.announceSeconds}s`);
+        addLog(
+          room,
+          "ALERT",
+          `RONDA 01 PREPARADA // ${crisis.name} // PLANIFICACIÓN SIN RELOJ: EL ANFITRIÓN ABRE EL CRONÓMETRO CUANDO EL SALÓN ESTÉ LISTO`
+        );
         for (const line of rules.incidentLogLines(room)) addLog(room, line.type, line.message);
         refreshDerived(room);
         await this.commit();
         return;
       }
 
+      case "HOST_BEGIN_ROUND": {
+        if (!meta.isHost || room.phase !== "PLANNING") return;
+        rules.beginRound(room);
+        addLog(room, "SYS", `CRONÓMETRO ABIERTO POR EL ANFITRIÓN // ANUNCIO DE ${room.announceSeconds}s EN CURSO`);
+        refreshDerived(room);
+        await this.commit();
+        return;
+      }
+
+      case "HOST_PAUSE": {
+        if (!meta.isHost || !rules.pauseClock(room)) return;
+        addLog(room, "SYS", `CRONÓMETRO PAUSADO POR EL ANFITRIÓN // QUEDAN ${room.timeRemaining}s`);
+        refreshDerived(room);
+        await this.commit();
+        return;
+      }
+
+      case "HOST_RESUME": {
+        if (!meta.isHost || !rules.resumeClock(room)) return;
+        addLog(room, "SYS", `CRONÓMETRO REANUDADO // QUEDAN ${room.timeRemaining}s`);
+        refreshDerived(room);
+        await this.commit();
+        return;
+      }
+
+      case "HOST_ADD_TIME": {
+        if (!meta.isHost) return;
+        const seconds = parseInt(msg.seconds, 10) || rules.EXTRA_SECONDS;
+        if (!rules.addTime(room, seconds)) return;
+        addLog(room, "SYS", `EL ANFITRIÓN SUMÓ ${seconds}s // QUEDAN ${room.timeRemaining}s`);
+        refreshDerived(room);
+        await this.commit();
+        return;
+      }
+
       case "HOST_SKIP_ANNOUNCE": {
-        if (!meta.isHost || room.phase !== "CRISIS_ANNOUNCE") return;
+        if (!meta.isHost) return;
+        if (room.phase !== "CRISIS_ANNOUNCE" && room.phase !== "PLANNING") return;
         rules.openNegotiation(room);
         addLog(room, "SYS", `ANUNCIO ADELANTADO POR EL ANFITRIÓN // NEGOCIACIÓN EN VIVO`);
         refreshDerived(room);
@@ -340,7 +381,7 @@ export class RoomDurableObject {
         if (!meta.isHost || room.phase !== "RESOLUTION") return;
         if (room.currentRound < room.totalRounds) {
           const crisis = rules.startRound(room, room.currentRound + 1);
-          addLog(room, "ALERT", `RONDA 0${room.currentRound} INICIADA // ${crisis.name}`);
+          addLog(room, "ALERT", `RONDA 0${room.currentRound} PREPARADA // ${crisis.name} // PLANIFICACIÓN SIN RELOJ`);
           for (const line of rules.incidentLogLines(room)) addLog(room, line.type, line.message);
         } else {
           room.finalResults = rules.finalResults(room, { irreversible: false });

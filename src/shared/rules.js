@@ -21,7 +21,7 @@
 const VERSION = "5.1";
 
 /** @typedef {"industry" | "residential" | "critical"} SectorKey */
-/** @typedef {"LOBBY" | "CRISIS_ANNOUNCE" | "CRISIS_ACTIVE" | "RESOLUTION" | "GAME_OVER"} GamePhase */
+/** @typedef {"LOBBY" | "PLANNING" | "CRISIS_ANNOUNCE" | "CRISIS_ACTIVE" | "RESOLUTION" | "GAME_OVER"} GamePhase */
 
 const SECTOR_ORDER = /** @type {SectorKey[]} */ (["industry", "residential", "critical"]);
 
@@ -95,6 +95,8 @@ const MAX_BLACKOUTS = 2; // 2 apagones => fallo irreversible (doc §7)
 const TOTAL_ROUNDS = 4;
 const ANNOUNCE_SECONDS = 10; // Fase 1: anuncio de crisis (doc §4)
 const NEGOTIATION_SECONDS = 60; // Fase 2: negociación en vivo (doc §4)
+/** Segundos que suma el botón "+30 s" del anfitrión durante una fase con reloj. */
+const EXTRA_SECONDS = 30;
 const MIN_DISTRICTS = 3;
 const MAX_DISTRICTS = 6;
 
@@ -818,6 +820,8 @@ function createRoom(pin, { seed, incidents = true } = {}) {
      */
     deadlineTs: null,
     timerRunning: false,
+    /** true = el anfitrión congeló el cronómetro de la fase (deadlineTs queda en null). */
+    paused: false,
     activeCrisis: null,
     /** Incidentes aleatorios vigentes en la ronda (vacío fuera de ronda). */
     incidents: [],
@@ -849,7 +853,63 @@ function districtCount(room) {
   return Object.keys(room.teams).length;
 }
 
-/** Fase 1: anuncio de crisis (10 s). La capacidad ya aparece recortada. */
+/**
+ * Fase 0: PLANIFICACIÓN (sin reloj). La crisis y los incidentes ya están en
+ * pantalla, con la red recortada, pero el cronómetro NO corre: el anfitrión
+ * decide cuándo empezar. Es el tiempo que el salón usa para discutir y pactar
+ * los cortes antes de que la ronda sea oficial.
+ */
+function openPlanning(room) {
+  room.phase = "PLANNING";
+  room.timeRemaining = 0;
+  room.deadlineTs = null;
+  room.timerRunning = false;
+  room.paused = false;
+  return room;
+}
+
+/** Fase 1: anuncio de crisis (10 s por defecto). La capacidad ya está recortada. */
+function beginRound(room) {
+  room.phase = "CRISIS_ANNOUNCE";
+  room.timeRemaining = room.announceSeconds;
+  room.deadlineTs = Date.now() + room.announceSeconds * 1000;
+  room.timerRunning = true;
+  room.paused = false;
+  return room;
+}
+
+/** Congela el reloj de la fase: guarda los segundos que quedaban y quita la fecha límite. */
+function pauseClock(room) {
+  if (!room || !room.timerRunning || room.paused || !room.deadlineTs) return false;
+  room.timeRemaining = remainingSeconds(room);
+  room.deadlineTs = null;
+  room.paused = true;
+  return true;
+}
+
+/** Reanuda el reloj justo donde estaba. */
+function resumeClock(room) {
+  if (!room || !room.paused) return false;
+  room.paused = false;
+  room.deadlineTs = Date.now() + Math.max(1, room.timeRemaining) * 1000;
+  room.timerRunning = true;
+  return true;
+}
+
+/** Suma segundos a la fase con reloj vigente (botón "+30 s" del anfitrión). */
+function addTime(room, seconds = EXTRA_SECONDS) {
+  if (!room || (room.phase !== "CRISIS_ANNOUNCE" && room.phase !== "CRISIS_ACTIVE")) return false;
+  const base = room.paused || !room.deadlineTs ? Math.max(0, room.timeRemaining) : remainingSeconds(room);
+  room.timeRemaining = base + seconds;
+  if (!room.paused) room.deadlineTs = Date.now() + room.timeRemaining * 1000;
+  room.timerRunning = true;
+  return true;
+}
+
+/**
+ * Nueva ronda: sortea crisis e incidentes, rearma las palancas y deja la sala en
+ * PLANIFICACIÓN. El reloj no arranca hasta que el anfitrión pulsa "iniciar ronda".
+ */
 function startRound(room, round = room.currentRound + 1) {
   room.currentRound = round;
   room.activeCrisis = crisisForRound(round);
@@ -877,10 +937,7 @@ function startRound(room, round = room.currentRound + 1) {
   }
 
   room.demand = totalDemand(Object.values(room.teams), room.activeCrisis, room.incidents);
-  room.phase = "CRISIS_ANNOUNCE";
-  room.timeRemaining = room.announceSeconds;
-  room.deadlineTs = Date.now() + room.announceSeconds * 1000;
-  room.timerRunning = true;
+  openPlanning(room);
   room.lastResolution = null;
   room.finalResults = null;
   return room.activeCrisis;
@@ -892,6 +949,7 @@ function openNegotiation(room) {
   room.timeRemaining = room.negotiationSeconds;
   room.deadlineTs = Date.now() + room.negotiationSeconds * 1000;
   room.timerRunning = true;
+  room.paused = false;
   return room;
 }
 
@@ -1078,6 +1136,7 @@ function resolveRound(room) {
 
   room.timerRunning = false;
   room.deadlineTs = null;
+  room.paused = false;
 
   if (room.blackoutCount >= MAX_BLACKOUTS) {
     // Derrota general: no se juega más, la red no se levanta.
@@ -1159,6 +1218,7 @@ module.exports = {
   TOTAL_ROUNDS,
   ANNOUNCE_SECONDS,
   NEGOTIATION_SECONDS,
+  EXTRA_SECONDS,
   MIN_DISTRICTS,
   MAX_DISTRICTS,
   DISTRICTS,
@@ -1186,6 +1246,11 @@ module.exports = {
   createRoom,
   districtCount,
   startRound,
+  openPlanning,
+  beginRound,
+  pauseClock,
+  resumeClock,
+  addTime,
   openNegotiation,
   recomputeDerived,
   resolveRound,

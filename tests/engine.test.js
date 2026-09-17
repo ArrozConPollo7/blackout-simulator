@@ -102,6 +102,13 @@ test("ronda 1: sin ceder carga hay BLACKOUT por gas", () => {
   const room = makeRoom(4);
   rules.startRound(room, 1);
 
+  // La ronda se prepara sin reloj: el anfitrión lo abre cuando quiera.
+  assert.equal(room.phase, "PLANNING");
+  assert.equal(room.timeRemaining, 0);
+  assert.equal(room.deadlineTs, null);
+  assert.equal(room.timerRunning, false);
+
+  rules.beginRound(room);
   assert.equal(room.phase, "CRISIS_ANNOUNCE");
   assert.equal(room.timeRemaining, 10);
   assert.equal(room.capacity.maxMW, 1440);
@@ -376,6 +383,11 @@ test("fases del ciclo de ronda", () => {
   assert.equal(room.phase, "LOBBY");
   const crisis = rules.startRound(room, 1);
   assert.equal(crisis.round, 1);
+  assert.equal(room.phase, "PLANNING");
+  assert.equal(room.timerRunning, false);
+  assert.equal(room.deadlineTs, null);
+
+  rules.beginRound(room);
   assert.equal(room.phase, "CRISIS_ANNOUNCE");
   assert.equal(room.timeRemaining, rules.ANNOUNCE_SECONDS);
   assert.equal(room.timerRunning, true);
@@ -604,4 +616,84 @@ test("ningún sorteo hace la ronda irresoluble ni perdona al que no toca nada", 
   }
 
   assert.ok(checked > 400, `se esperaban cientos de combinaciones, se revisaron ${checked}`);
+});
+
+// ---------------------------------------------------------------------------
+// Ritmo de la ronda: planificación, pausa y tiempo extra
+// ---------------------------------------------------------------------------
+
+test("la ronda se abre en planificación: el reloj no corre hasta que el anfitrión lo abre", () => {
+  const room = makeRoom(4);
+  rules.startRound(room, 2);
+
+  assert.equal(room.phase, "PLANNING");
+  assert.equal(room.deadlineTs, null);
+  assert.equal(room.timerRunning, false);
+  assert.equal(room.paused, false);
+  assert.equal(rules.remainingSeconds(room), 0);
+
+  rules.beginRound(room);
+  assert.equal(room.phase, "CRISIS_ANNOUNCE");
+  assert.equal(room.timeRemaining, room.announceSeconds);
+  assert.ok(room.deadlineTs > Date.now());
+});
+
+test("pausar congela el reloj, +30 s se acumula y reanudar reprograma la fecha límite", () => {
+  const room = makeRoom(4);
+  rules.startRound(room, 2);
+  rules.beginRound(room);
+
+  room.timeRemaining = 7; // queda poco: pausa para la discusión
+  room.deadlineTs = Date.now() + 7000;
+
+  assert.equal(rules.pauseClock(room), true);
+  assert.equal(room.paused, true);
+  assert.equal(room.deadlineTs, null);
+  assert.equal(room.timeRemaining, 7);
+  assert.equal(rules.remainingSeconds(room), 7, "el cliente dibuja el valor congelado");
+  assert.equal(rules.pauseClock(room), false, "no se puede pausar dos veces");
+
+  assert.equal(rules.addTime(room, 30), true);
+  assert.equal(room.timeRemaining, 37);
+  assert.equal(room.deadlineTs, null, "sumar tiempo no reanuda el reloj");
+
+  assert.equal(rules.resumeClock(room), true);
+  assert.equal(room.paused, false);
+  const restante = Math.round((room.deadlineTs - Date.now()) / 1000);
+  assert.ok(restante >= 36 && restante <= 37, `reanudó con ${restante}s`);
+  assert.equal(rules.resumeClock(room), false, "no reanuda si no estaba pausado");
+});
+
+test("+30 s solo aplica a las fases con reloj", () => {
+  const room = makeRoom(4);
+  rules.startRound(room, 2);
+  assert.equal(rules.addTime(room, 30), false, "en planificación no hay reloj que sumar");
+
+  rules.beginRound(room);
+  room.timeRemaining = 5;
+  room.deadlineTs = Date.now() + 5000;
+  assert.equal(rules.addTime(room, 30), true);
+  assert.equal(room.timeRemaining, 35);
+  assert.ok(Math.round((room.deadlineTs - Date.now()) / 1000) >= 34);
+
+  rules.openNegotiation(room);
+  assert.equal(room.timeRemaining, rules.NEGOTIATION_SECONDS, "la negociación arranca con su tiempo completo");
+  assert.equal(rules.addTime(room, rules.EXTRA_SECONDS), true);
+  assert.equal(room.timeRemaining, rules.NEGOTIATION_SECONDS + rules.EXTRA_SECONDS);
+});
+
+test("la negociación quita la pausa y la resolución deja el reloj limpio", () => {
+  const room = makeRoom(4);
+  rules.startRound(room, 2);
+  rules.beginRound(room);
+  rules.pauseClock(room);
+
+  rules.openNegotiation(room);
+  assert.equal(room.paused, false);
+  assert.equal(room.phase, "CRISIS_ACTIVE");
+
+  rules.resolveRound(room);
+  assert.equal(room.timerRunning, false);
+  assert.equal(room.deadlineTs, null);
+  assert.equal(room.paused, false);
 });

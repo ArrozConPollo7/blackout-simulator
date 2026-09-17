@@ -227,10 +227,14 @@ test("Blackout en Cloudflare Workers + Durable Objects", async (t) => {
 
   await t.test("la ronda avanza por alarmas del Durable Object y resuelve sola", async () => {
     host.send({ type: "HOST_START_GAME" });
-    await waitFor(() => host.state.phase === "CRISIS_ANNOUNCE", { label: "anuncio" });
+    await waitFor(() => host.state.phase === "PLANNING", { label: "planificación sin reloj" });
 
     assert.equal(host.state.currentRound, 1);
     assert.equal(host.state.capacity.maxGas, 2400);
+    assert.equal(host.state.deadlineTs, null, "la planificación no corre contra el reloj");
+
+    host.send({ type: "HOST_BEGIN_ROUND" });
+    await waitFor(() => host.state.phase === "CRISIS_ANNOUNCE", { label: "anuncio" });
     assert.ok(host.state.deadlineTs > Date.now(), "el estado publica la fecha límite de la fase");
 
     // 2 s de anuncio -> negociación; 3 s -> resolución automática, sin latidos
@@ -247,8 +251,8 @@ test("Blackout en Cloudflare Workers + Durable Objects", async (t) => {
 
   await t.test("segundo apagón: fin de partida irreversible y reinicio", async () => {
     host.send({ type: "HOST_NEXT_ROUND" });
-    await waitFor(() => host.state.currentRound === 2 && host.state.phase === "CRISIS_ANNOUNCE", {
-      label: "anuncio de la ronda 2",
+    await waitFor(() => host.state.currentRound === 2 && host.state.phase === "PLANNING", {
+      label: "planificación de la ronda 2",
     });
     assert.equal(host.state.capacity.maxMW, 936);
     // El Durable Object sortea los mismos incidentes que el servidor Node:
@@ -256,6 +260,7 @@ test("Blackout en Cloudflare Workers + Durable Objects", async (t) => {
     assert.deepEqual(host.state.incidents.map((i) => i.id), ["inc-cuarentena"]);
     assert.equal(host.state.lockedSectors.critical, true);
 
+    host.send({ type: "HOST_BEGIN_ROUND" });
     await waitFor(() => host.state.phase === "CRISIS_ACTIVE", { label: "negociación de la ronda 2", timeout: 12000 });
     host.send({ type: "HOST_RESOLVE_NOW" });
     await waitFor(() => host.state.phase === "GAME_OVER", { label: "derrota irreversible" });

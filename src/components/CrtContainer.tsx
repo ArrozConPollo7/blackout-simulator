@@ -45,7 +45,7 @@ export function CrtContainer({
 
   return (
     <div
-      className={`min-h-screen relative overflow-hidden bg-[#080812] transition-transform duration-100 ${getPhosphorClass()} ${
+      className={`min-h-screen relative overflow-x-clip bg-[#080812] transition-transform duration-100 ${getPhosphorClass()} ${
         violentShake
           ? "shake-violent"
           : shake

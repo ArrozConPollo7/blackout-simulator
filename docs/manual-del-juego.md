@@ -125,21 +125,37 @@ agregada contra el techo y marca en rojo el déficit (MW, gas o ambos).
 
 ## 5. Ciclo de una ronda, paso a paso
 
-Cada una de las 4 rondas sigue esta secuencia, gobernada por el servidor (reloj autoritativo):
+Cada una de las 4 rondas sigue esta secuencia, gobernada por el servidor (reloj autoritativo). **El ritmo lo
+marca el anfitrión, no el cronómetro**: entre rondas la sala se queda esperando y el reloj solo corre cuando él
+lo abre.
 
-1. **Anuncio de crisis (10 s, `ANNOUNCE_SECONDS`).** El proyector muestra la tarjeta de la crisis y, si toca,
-   las tarjetas de los **incidentes sorteados**. La capacidad ya aparece recortada y los medidores entran en zona
-   de peligro. El anfitrión puede adelantar el paso con `ANUNCIO ADELANTADO`.
-2. **Negociación en vivo (60 s, `NEGOTIATION_SECONDS`).** El cronómetro corre en todas las pantallas. Cada palanca
-   que mueve una mesa cambia al instante los medidores del proyector. Se puede cambiar de decisión hasta el último
-   segundo (ahí está la gracia). El anfitrión puede operar a mano los distritos sin teléfono.
-3. **Resolución automática (t = 0).** Al expirar el cronómetro el servidor evalúa la red **una sola vez** y publica
+1. **Planificación (sin reloj).** Al abrir una ronda nueva se sortean crisis e incidentes, la capacidad aparece ya
+   recortada y las palancas se rearman al 100%… pero **el tiempo no corre**. El salón ve el problema en pantalla
+   y discute cuánto y quién cede; las mesas pueden dejar sus palancas premarcadas y el anfitrión ve el efecto en
+   los medidores. Es el momento de "¿quién apaga la industria?" sin agobios.
+2. **Anuncio de crisis (10 s, `ANNOUNCE_SECONDS`).** El anfitrión pulsa `ABRIR CRONÓMETRO` (o salta directo a la
+   negociación) y arranca la cuenta atrás. Los medidores entran en zona de peligro.
+3. **Negociación en vivo (60 s, `NEGOTIATION_SECONDS`).** El cronómetro corre en todas las pantallas. Cada palanca
+   cambia al instante los medidores del proyector y se puede cambiar de decisión hasta el último segundo.
+4. **Resolución automática (t = 0).** Al expirar el cronómetro el servidor evalúa la red **una sola vez** y publica
    el parte: estable o blackout, con el detalle económico y de bienestar distrito por distrito.
-4. **Siguiente ronda.** El anfitrión pulsa `SIGUIENTE RONDA`: vuelven a encenderse todas las palancas y se sortea
-   la crisis y los incidentes de la ronda siguiente. Tras la ronda 4 se publica la clasificación final.
+5. **Siguiente ronda, cuando el anfitrión quiera.** El botón `SIGUIENTE RONDA` abre la planificación de la ronda
+   siguiente (otra vez sin reloj). Tras la ronda 4 se publica la clasificación final.
 
-El anfitrión también puede **forzar la resolución** (`RESOLVER AHORA`) si la discusión se ha terminado antes, o
-**reiniciar** la simulación completa (vuelve al vestíbulo y expulsa las sesiones de las mesas).
+Controles del anfitrión durante la partida:
+
+| Control | Cuándo | Qué hace |
+|---|---|---|
+| `ABRIR CRONÓMETRO` | Planificación | Arranca anuncio + negociación de la ronda preparada |
+| `SALTAR AL ANUNCIO Y NEGOCIAR YA` | Planificación o anuncio | Salta el anuncio y va directo a la negociación |
+| `PAUSAR RELOJ` / `REANUDAR RELOJ` | Anuncio o negociación | Congela el tiempo (sigue donde estaba) y lo reanuda: la forma limpia de alargar una discusión buena |
+| `+30 s` | Anuncio o negociación | Suma 30 segundos a la fase (acumulable) |
+| `FORZAR RESOLUCIÓN` | Negociación | Cierra la ronda antes de tiempo si ya hay acuerdo |
+| `SIGUIENTE RONDA` | Resolución | Prepara la ronda siguiente (planificación sin reloj) |
+| `NUEVA SIMULACIÓN` | Fin de partida | Vuelve al vestíbulo y expulsa las sesiones de las mesas |
+
+Esta fila de control queda **fija bajo el encabezado** mientras se desplaza el tablero: para avanzar de ronda no
+hay que buscar el botón.
 
 El reloj **no late**: el estado publica la fecha límite (`deadlineTs`) y cada cliente dibuja su cuenta atrás; el
 servidor se despierta una sola vez, en esa fecha. Menos tráfico y un Durable Object que puede hibernar.
@@ -402,8 +418,9 @@ scripts/reference-game.js partida de referencia sin interfaz (números del manua
 - **Autoridad única:** las mesas solo envían intenciones (`TOGGLE_SECTOR`, `SCRAM`); el servidor responde con el
   estado completo (`SYNC_STATE`). El proyector necesita la clave maestra para operar.
 - **Mensajes cliente → servidor:** `HOST_OPEN_ROOM`, `HOST_SEED_DISTRICTS`, `HOST_REMOVE_UNCLAIMED`,
-  `HOST_START_GAME`, `HOST_SKIP_ANNOUNCE`, `HOST_RESOLVE_NOW`, `HOST_NEXT_ROUND`, `HOST_RESET_GAME`,
-  `HOST_TOGGLE_SECTOR`, `WATCH_ROOM`, `JOIN_DISTRICT`, `LEAVE_DISTRICT`, `TOGGLE_SECTOR`, `SCRAM`, `PING`.
+  `HOST_START_GAME`, `HOST_BEGIN_ROUND`, `HOST_PAUSE`, `HOST_RESUME`, `HOST_ADD_TIME`, `HOST_SKIP_ANNOUNCE`,
+  `HOST_RESOLVE_NOW`, `HOST_NEXT_ROUND`, `HOST_RESET_GAME`, `HOST_TOGGLE_SECTOR`, `WATCH_ROOM`,
+  `JOIN_DISTRICT`, `LEAVE_DISTRICT`, `TOGGLE_SECTOR`, `SCRAM`, `PING`.
 - **Mensajes servidor → cliente:** `SYNC_STATE`, `JOIN_SUCCESS`, `JOIN_REJECTED`, `ROOM_NOT_FOUND`,
   `SESSION_EXPIRED`, `ERROR`, `ALERT`.
 - **Endpoint de salud:** `GET /healthz` devuelve versión, salas activas, fase, ronda, apagones, **semilla,
@@ -414,6 +431,7 @@ scripts/reference-game.js partida de referencia sin interfaz (números del manua
 | `HOST_PASSCODE` | `1984` | Clave maestra del anfitrión. En internet, usa un secreto (`wrangler secret put`) |
 | `ANNOUNCE_SECONDS` | `10` | Duración del anuncio de crisis |
 | `NEGOTIATION_SECONDS` | `60` | Duración de la negociación |
+| `EXTRA_SECONDS` | `30` | Segundos que suma el botón `+30 s` del anfitrión (constante del motor) |
 | `PORT` | `3006` | Puerto del servidor Node (opción LAN) |
 | `GAME_SEED` | aleatoria | Fija la semilla: repite exactamente el mismo guion de incidentes |
 | `INCIDENTS` | `on` | `off` desactiva los incidentes aleatorios (aritmética pura del documento) |
@@ -536,7 +554,8 @@ aritmética del documento sin azar; los sorteos se prueban aparte con semillas f
 - [ ] Si es Cloudflare: `wrangler login`, subir `HOST_PASSCODE` como secreto y desplegar. Probar desde el móvil.
 - [ ] Si es LAN: `npm run build` y dejar el comando `docker run …` probado; confirmar la IP de LAN de Windows.
 - [ ] Hacer **un ensayo completo** (proyector + 2 móviles) midiendo si 10 s de anuncio y 60 s de negociación son
-      suficientes para tu grupo; si no, ajustar `ANNOUNCE_SECONDS` / `NEGOTIATION_SECONDS`.
+      suficientes para tu grupo; si no, ajustar `ANNOUNCE_SECONDS` / `NEGOTIATION_SECONDS`. Recuerda que la ronda
+      se prepara **sin reloj**: el cronómetro solo empieza cuando tú lo abres.
 - [ ] Decidir la semilla (`GAME_SEED`) si quieres un guion concreto, y **jugarla antes** con
       `node scripts/reference-game.js --seed N` para saber qué incidentes salen.
 
@@ -552,7 +571,8 @@ aritmética del documento sin azar; los sorteos se prueban aparte con semillas f
 **Durante**
 
 - [ ] Leer en voz alta la crisis y los incidentes de la ronda (el proyector los tiene en grande).
-- [ ] No interrumpir la negociación: el valor pedagógico está en el grito.
+- [ ] No interrumpir la negociación: el valor pedagógico está en el grito. Si la discusión está siendo buena,
+      `PAUSAR RELOJ` y sigues cuando quieras; si se descarrila, `FORZAR RESOLUCIÓN`.
 - [ ] Usar `RESOLVER AHORA` si el acuerdo llegó antes de tiempo.
 - [ ] Al acabar: leer el parte distrito por distrito y cerrar con las menciones (Ejemplar, Mártir, Parásito).
 

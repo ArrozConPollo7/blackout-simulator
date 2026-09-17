@@ -31,7 +31,13 @@ import {
 
 export type SectorKey = "industry" | "residential" | "critical";
 
-export type GamePhase = "LOBBY" | "CRISIS_ANNOUNCE" | "CRISIS_ACTIVE" | "RESOLUTION" | "GAME_OVER";
+export type GamePhase =
+  | "LOBBY"
+  | "PLANNING"
+  | "CRISIS_ANNOUNCE"
+  | "CRISIS_ACTIVE"
+  | "RESOLUTION"
+  | "GAME_OVER";
 
 export interface SectorsState {
   industry: boolean;
@@ -224,6 +230,8 @@ export interface RoomState {
   timeRemaining: number;
   deadlineTs: number | null;
   timerRunning: boolean;
+  /** true = el anfitrión congeló el cronómetro de la fase. */
+  paused: boolean;
   activeCrisis: CrisisEvent | null;
   /** Semilla del sorteo: dos salas con la misma semilla juegan el mismo guion. */
   seed: number;
@@ -255,6 +263,10 @@ export type ClientMessage =
   | { type: "HOST_SEED_DISTRICTS"; count: number }
   | { type: "HOST_REMOVE_UNCLAIMED" }
   | { type: "HOST_START_GAME" }
+  | { type: "HOST_BEGIN_ROUND" }
+  | { type: "HOST_PAUSE" }
+  | { type: "HOST_RESUME" }
+  | { type: "HOST_ADD_TIME"; seconds?: number }
   | { type: "HOST_SKIP_ANNOUNCE" }
   | { type: "HOST_RESOLVE_NOW" }
   | { type: "HOST_NEXT_ROUND" }

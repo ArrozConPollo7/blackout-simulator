@@ -63,6 +63,12 @@ export default function RulesPage() {
             toma de nuevo, ronda a ronda.
           </p>
           <p className="font-data text-[11px] text-on-surface-variant">
+            // La ronda se prepara <strong className="text-on-surface">sin reloj</strong>: verán la crisis y los
+            incidentes en pantalla y podrán mover sus palancas todo lo que necesiten. Cuando el salón esté listo, el
+            anfitrión abre el cronómetro ({ANNOUNCE_SECONDS} s de anuncio + {NEGOTIATION_SECONDS} s de negociación) y
+            también puede <strong className="text-on-surface">pausarlo</strong> o sumar 30 s si la discusión sigue viva.
+          </p>
+          <p className="font-data text-[11px] text-on-surface-variant">
             // Sobre esta crisis se sortean incidentes aleatorios (ver la sección siguiente): dos partidas de 4
             rondas casi nunca se juegan igual.
           </p>

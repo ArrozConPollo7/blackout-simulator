@@ -242,27 +242,75 @@ capacidad_gas = 750 m³ × nº_distritos × multiplicador_gas(crisis)      × �
 <p>agregada contra el techo y marca en rojo el déficit (MW, gas o ambos).</p>
 <hr/>
 <h2 id="5-ciclo-de-una-ronda-paso-a-paso">5. Ciclo de una ronda, paso a paso</h2>
-<p>Cada una de las 4 rondas sigue esta secuencia, gobernada por el servidor (reloj autoritativo):</p>
+<p>Cada una de las 4 rondas sigue esta secuencia, gobernada por el servidor (reloj autoritativo). **El ritmo lo</p>
+<p>marca el anfitrión, no el cronómetro**: entre rondas la sala se queda esperando y el reloj solo corre cuando él</p>
+<p>lo abre.</p>
 <ul>
-<li>1. <strong>Anuncio de crisis (10 s, <code>ANNOUNCE_SECONDS</code>).</strong> El proyector muestra la tarjeta de la crisis y, si toca,</li>
+<li>1. <strong>Planificación (sin reloj).</strong> Al abrir una ronda nueva se sortean crisis e incidentes, la capacidad aparece ya</li>
 </ul>
-<p>   las tarjetas de los <strong>incidentes sorteados</strong>. La capacidad ya aparece recortada y los medidores entran en zona</p>
-<p>   de peligro. El anfitrión puede adelantar el paso con <code>ANUNCIO ADELANTADO</code>.</p>
+<p>   recortada y las palancas se rearman al 100%… pero <strong>el tiempo no corre</strong>. El salón ve el problema en pantalla</p>
+<p>   y discute cuánto y quién cede; las mesas pueden dejar sus palancas premarcadas y el anfitrión ve el efecto en</p>
+<p>   los medidores. Es el momento de &quot;¿quién apaga la industria?&quot; sin agobios.</p>
 <ul>
-<li>2. <strong>Negociación en vivo (60 s, <code>NEGOTIATION_SECONDS</code>).</strong> El cronómetro corre en todas las pantallas. Cada palanca</li>
+<li>2. <strong>Anuncio de crisis (10 s, <code>ANNOUNCE_SECONDS</code>).</strong> El anfitrión pulsa <code>ABRIR CRONÓMETRO</code> (o salta directo a la</li>
 </ul>
-<p>   que mueve una mesa cambia al instante los medidores del proyector. Se puede cambiar de decisión hasta el último</p>
-<p>   segundo (ahí está la gracia). El anfitrión puede operar a mano los distritos sin teléfono.</p>
+<p>   negociación) y arranca la cuenta atrás. Los medidores entran en zona de peligro.</p>
 <ul>
-<li>3. <strong>Resolución automática (t = 0).</strong> Al expirar el cronómetro el servidor evalúa la red <strong>una sola vez</strong> y publica</li>
+<li>3. <strong>Negociación en vivo (60 s, <code>NEGOTIATION_SECONDS</code>).</strong> El cronómetro corre en todas las pantallas. Cada palanca</li>
+</ul>
+<p>   cambia al instante los medidores del proyector y se puede cambiar de decisión hasta el último segundo.</p>
+<ul>
+<li>4. <strong>Resolución automática (t = 0).</strong> Al expirar el cronómetro el servidor evalúa la red <strong>una sola vez</strong> y publica</li>
 </ul>
 <p>   el parte: estable o blackout, con el detalle económico y de bienestar distrito por distrito.</p>
 <ul>
-<li>4. <strong>Siguiente ronda.</strong> El anfitrión pulsa <code>SIGUIENTE RONDA</code>: vuelven a encenderse todas las palancas y se sortea</li>
+<li>5. <strong>Siguiente ronda, cuando el anfitrión quiera.</strong> El botón <code>SIGUIENTE RONDA</code> abre la planificación de la ronda</li>
 </ul>
-<p>   la crisis y los incidentes de la ronda siguiente. Tras la ronda 4 se publica la clasificación final.</p>
-<p>El anfitrión también puede <strong>forzar la resolución</strong> (<code>RESOLVER AHORA</code>) si la discusión se ha terminado antes, o</p>
-<p><strong>reiniciar</strong> la simulación completa (vuelve al vestíbulo y expulsa las sesiones de las mesas).</p>
+<p>   siguiente (otra vez sin reloj). Tras la ronda 4 se publica la clasificación final.</p>
+<p>Controles del anfitrión durante la partida:</p>
+<table><thead><tr>
+<th>Control</th>
+<th>Cuándo</th>
+<th>Qué hace</th>
+</tr></thead><tbody>
+<tr>
+<td><code>ABRIR CRONÓMETRO</code></td>
+<td>Planificación</td>
+<td>Arranca anuncio + negociación de la ronda preparada</td>
+</tr>
+<tr>
+<td><code>SALTAR AL ANUNCIO Y NEGOCIAR YA</code></td>
+<td>Planificación o anuncio</td>
+<td>Salta el anuncio y va directo a la negociación</td>
+</tr>
+<tr>
+<td><code>PAUSAR RELOJ</code> / <code>REANUDAR RELOJ</code></td>
+<td>Anuncio o negociación</td>
+<td>Congela el tiempo (sigue donde estaba) y lo reanuda: la forma limpia de alargar una discusión buena</td>
+</tr>
+<tr>
+<td><code>+30 s</code></td>
+<td>Anuncio o negociación</td>
+<td>Suma 30 segundos a la fase (acumulable)</td>
+</tr>
+<tr>
+<td><code>FORZAR RESOLUCIÓN</code></td>
+<td>Negociación</td>
+<td>Cierra la ronda antes de tiempo si ya hay acuerdo</td>
+</tr>
+<tr>
+<td><code>SIGUIENTE RONDA</code></td>
+<td>Resolución</td>
+<td>Prepara la ronda siguiente (planificación sin reloj)</td>
+</tr>
+<tr>
+<td><code>NUEVA SIMULACIÓN</code></td>
+<td>Fin de partida</td>
+<td>Vuelve al vestíbulo y expulsa las sesiones de las mesas</td>
+</tr>
+</tbody></table>
+<p>Esta fila de control queda <strong>fija bajo el encabezado</strong> mientras se desplaza el tablero: para avanzar de ronda no</p>
+<p>hay que buscar el botón.</p>
 <p>El reloj <strong>no late</strong>: el estado publica la fecha límite (<code>deadlineTs</code>) y cada cliente dibuja su cuenta atrás; el</p>
 <p>servidor se despierta una sola vez, en esa fecha. Menos tráfico y un Durable Object que puede hibernar.</p>
 <hr/>
@@ -721,8 +769,9 @@ scripts/reference-game.js partida de referencia sin interfaz (números del manua
 <ul>
 <li><strong>Mensajes cliente → servidor:</strong> <code>HOST_OPEN_ROOM</code>, <code>HOST_SEED_DISTRICTS</code>, <code>HOST_REMOVE_UNCLAIMED</code>,</li>
 </ul>
-<p>  <code>HOST_START_GAME</code>, <code>HOST_SKIP_ANNOUNCE</code>, <code>HOST_RESOLVE_NOW</code>, <code>HOST_NEXT_ROUND</code>, <code>HOST_RESET_GAME</code>,</p>
-<p>  <code>HOST_TOGGLE_SECTOR</code>, <code>WATCH_ROOM</code>, <code>JOIN_DISTRICT</code>, <code>LEAVE_DISTRICT</code>, <code>TOGGLE_SECTOR</code>, <code>SCRAM</code>, <code>PING</code>.</p>
+<p>  <code>HOST_START_GAME</code>, <code>HOST_BEGIN_ROUND</code>, <code>HOST_PAUSE</code>, <code>HOST_RESUME</code>, <code>HOST_ADD_TIME</code>, <code>HOST_SKIP_ANNOUNCE</code>,</p>
+<p>  <code>HOST_RESOLVE_NOW</code>, <code>HOST_NEXT_ROUND</code>, <code>HOST_RESET_GAME</code>, <code>HOST_TOGGLE_SECTOR</code>, <code>WATCH_ROOM</code>,</p>
+<p>  <code>JOIN_DISTRICT</code>, <code>LEAVE_DISTRICT</code>, <code>TOGGLE_SECTOR</code>, <code>SCRAM</code>, <code>PING</code>.</p>
 <ul>
 <li><strong>Mensajes servidor → cliente:</strong> <code>SYNC_STATE</code>, <code>JOIN_SUCCESS</code>, <code>JOIN_REJECTED</code>, <code>ROOM_NOT_FOUND</code>,</li>
 </ul>
@@ -750,6 +799,11 @@ scripts/reference-game.js partida de referencia sin interfaz (números del manua
 <td><code>NEGOTIATION_SECONDS</code></td>
 <td><code>60</code></td>
 <td>Duración de la negociación</td>
+</tr>
+<tr>
+<td><code>EXTRA_SECONDS</code></td>
+<td><code>30</code></td>
+<td>Segundos que suma el botón <code>+30 s</code> del anfitrión (constante del motor)</td>
 </tr>
 <tr>
 <td><code>PORT</code></td>
@@ -884,7 +938,8 @@ node scripts/reference-game.js --scan 300   # balance: ¿tiene salida cada semil
 <li>[ ] Si es LAN: <code>npm run build</code> y dejar el comando <code>docker run …</code> probado; confirmar la IP de LAN de Windows.</li>
 <li>[ ] Hacer <strong>un ensayo completo</strong> (proyector + 2 móviles) midiendo si 10 s de anuncio y 60 s de negociación son</li>
 </ul>
-<p>      suficientes para tu grupo; si no, ajustar <code>ANNOUNCE_SECONDS</code> / <code>NEGOTIATION_SECONDS</code>.</p>
+<p>      suficientes para tu grupo; si no, ajustar <code>ANNOUNCE_SECONDS</code> / <code>NEGOTIATION_SECONDS</code>. Recuerda que la ronda</p>
+<p>      se prepara <strong>sin reloj</strong>: el cronómetro solo empieza cuando tú lo abres.</p>
 <ul>
 <li>[ ] Decidir la semilla (<code>GAME_SEED</code>) si quieres un guion concreto, y <strong>jugarla antes</strong> con</li>
 </ul>
@@ -903,7 +958,10 @@ node scripts/reference-game.js --scan 300   # balance: ¿tiene salida cada semil
 <p><strong>Durante</strong></p>
 <ul>
 <li>[ ] Leer en voz alta la crisis y los incidentes de la ronda (el proyector los tiene en grande).</li>
-<li>[ ] No interrumpir la negociación: el valor pedagógico está en el grito.</li>
+<li>[ ] No interrumpir la negociación: el valor pedagógico está en el grito. Si la discusión está siendo buena,</li>
+</ul>
+<p>      <code>PAUSAR RELOJ</code> y sigues cuando quieras; si se descarrila, <code>FORZAR RESOLUCIÓN</code>.</p>
+<ul>
 <li>[ ] Usar <code>RESOLVER AHORA</code> si el acuerdo llegó antes de tiempo.</li>
 <li>[ ] Al acabar: leer el parte distrito por distrito y cerrar con las menciones (Ejemplar, Mártir, Parásito).</li>
 </ul>

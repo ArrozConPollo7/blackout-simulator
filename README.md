@@ -135,14 +135,23 @@ Cada clase que juega en paralelo usa su **propio PIN de sala**, y eso la aísla 
 1. **Vestíbulo.** El anfitrión reserva el panel (4, 5 o 6 distritos); cada mesa entra desde su teléfono con el
    PIN de sala (`VOLT` por defecto) y **toma un distrito libre** (uno por mesa; los distritos que nadie tome
    siguen consumiendo y el anfitrión puede operarlos a mano).
-2. **Anuncio de crisis (10 s).** Se recorta la capacidad de la ronda y se muestra la tarjeta del evento.
-3. **Negociación en vivo (60 s).** Los distritos debaten en voz alta; cada palanca mueve los medidores del
-   proyector al instante. Los sectores se rearman al 100% al inicio de cada ronda.
-4. **Resolución automática (t = 0).** El servidor compara la demanda agregada de MW **y** de gas con el techo de
+2. **Planificación (sin reloj).** La ronda se prepara con la crisis y los incidentes ya en pantalla y la red
+   recortada, pero **el cronómetro no corre**: el salón discute y pacta los cortes, y las palancas se pueden
+   dejar premarcadas. El anfitrión decide cuándo abrir el cronómetro (`ABRIR CRONÓMETRO`) o saltar directo a la
+   negociación.
+3. **Anuncio de crisis (10 s).** Se recorta la capacidad de la ronda y se muestra la tarjeta del evento.
+4. **Negociación en vivo (60 s).** Los distritos debaten en voz alta; cada palanca mueve los medidores del
+   proyector al instante. Los sectores se rearman al 100% al inicio de cada ronda. El anfitrión puede
+   **pausar el reloj** (`PAUSAR RELOJ`), **sumar 30 s** (`+30 s`) o **forzar la resolución** si la discusión ya
+   terminó.
+5. **Resolución automática (t = 0).** El servidor compara la demanda agregada de MW **y** de gas con el techo de
    la ronda: si cualquiera se pasa, hay **BLACKOUT** colectivo.
-5. **2 apagones ⇒ `FALLO REGIONAL IRREVERSIBLE — NO HAY GANADORES`.** Si la red sobrevive las 4 rondas, gana el
+6. **2 apagones ⇒ `FALLO REGIONAL IRREVERSIBLE — NO HAY GANADORES`.** Si la red sobrevive las 4 rondas, gana el
    mayor **PEF = Bienestar + (Tesorería / 100)**, con menciones de *Operador de Red Ejemplar*, *Distrito Mártir*
    y *Distrito Parásito*.
+
+Entre rondas no hay prisa: tras la resolución la sala se queda quieta hasta que el anfitrión abre la siguiente
+planificación, así que el ritmo de la clase lo marca él y no el cronómetro.
 
 ### Balance
 
@@ -202,7 +211,8 @@ tests/worker.e2e.test.js  Partida completa contra wrangler dev (Durable Objects)
 ### Protocolo WebSocket
 
 Cliente → servidor: `HOST_OPEN_ROOM` (con `passcode`), `HOST_SEED_DISTRICTS`, `HOST_REMOVE_UNCLAIMED`,
-`HOST_START_GAME`, `HOST_SKIP_ANNOUNCE`, `HOST_RESOLVE_NOW`, `HOST_NEXT_ROUND`, `HOST_RESET_GAME`,
+`HOST_START_GAME`, `HOST_BEGIN_ROUND` (abre el cronómetro de la ronda preparada), `HOST_PAUSE`, `HOST_RESUME`,
+`HOST_ADD_TIME` (segundos extra), `HOST_SKIP_ANNOUNCE`, `HOST_RESOLVE_NOW`, `HOST_NEXT_ROUND`, `HOST_RESET_GAME`,
 `HOST_TOGGLE_SECTOR`, `WATCH_ROOM`, `JOIN_DISTRICT`, `LEAVE_DISTRICT`, `TOGGLE_SECTOR`, `SCRAM`, `PING`.
 
 Servidor → cliente: `SYNC_STATE`, `JOIN_SUCCESS`, `JOIN_REJECTED`, `ROOM_NOT_FOUND`, `SESSION_EXPIRED`, `ERROR`,

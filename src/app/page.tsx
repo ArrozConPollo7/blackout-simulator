@@ -29,6 +29,7 @@ function readStorage(key: string, fallback = ""): string {
 
 const PHASE_LABEL: Record<string, string> = {
   LOBBY: "VESTÍBULO // ESPERANDO ARRANQUE",
+  PLANNING: "PLANIFICACIÓN // SIN RELOJ",
   CRISIS_ANNOUNCE: "ANUNCIO DE CRISIS",
   CRISIS_ACTIVE: "CRISIS EN VIVO // NEGOCIAR",
   RESOLUTION: "CICLO RESUELTO",
@@ -337,8 +338,16 @@ export default function DistrictControllerPage() {
             <span className="font-headline text-sm text-primary font-bold">
               {roomState?.currentRound || 0}/{roomState?.totalRounds || 4}
             </span>
-            <span className={`font-headline text-sm ${isUrgent ? "text-error animate-pulse" : "text-primary"}`}>
-              {timeFormatted}
+            <span
+              className={`font-headline text-sm ${
+                roomState?.paused
+                  ? "text-warning-amber animate-pulse"
+                  : isUrgent
+                  ? "text-error animate-pulse"
+                  : "text-primary"
+              }`}
+            >
+              {roomState?.paused ? `PAUSA ${timeFormatted}` : timeFormatted}
             </span>
             <button
               onClick={handleLeave}

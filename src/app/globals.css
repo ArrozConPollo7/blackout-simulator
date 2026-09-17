@@ -20,7 +20,10 @@
     background-color: #080812;
     color: #e4e1f0;
     font-family: 'Space Mono', monospace;
-    overflow-x: hidden;
+    /* `clip` en lugar de `hidden`: recorta el desbordamiento horizontal sin
+     * crear un contenedor de scroll, así el `sticky` del header funciona. */
+    overflow-x: clip;
+    scrollbar-gutter: stable;
     user-select: none;
     -webkit-user-select: none;
   }
@@ -117,18 +120,47 @@
   background-size: 8px 8px;
 }
 
-/* Custom Scrollbar */
+/*
+ * Scrollbar. Por defecto ANCHA y visible: en PC y proyector la de 4 px era casi
+ * invisible y agarrable con pinzas (había que tirar de la rueda para todo).
+ * Solo se afina en pantallas táctiles, donde no se usa para arrastrar.
+ */
 ::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 12px;
+  height: 12px;
 }
 ::-webkit-scrollbar-track {
-  background: #0d0d17;
+  background: #0a0a14;
+  border-left: 1px solid #1c1c36;
 }
 ::-webkit-scrollbar-thumb {
-  background: #1c1c36;
-  border-radius: 2px;
+  background: #2a2a4a;
+  border: 2px solid #0a0a14;
+  border-radius: 8px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #2bf075;
+}
+html {
+  scrollbar-width: auto;
+  scrollbar-color: #2a2a4a #0a0a14;
+}
+
+@media (pointer: coarse) {
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0d0d17;
+    border: none;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #1c1c36;
+    border: none;
+    border-radius: 2px;
+  }
+  html {
+    scrollbar-width: thin;
+  }
 }

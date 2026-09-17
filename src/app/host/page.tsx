@@ -31,6 +31,7 @@ export default function HostProjectorPage() {
 
 const PHASE_LABEL: Record<string, string> = {
   LOBBY: "VESTÍBULO",
+  PLANNING: "PLANIFICACIÓN (SIN RELOJ)",
   CRISIS_ANNOUNCE: "ANUNCIO DE CRISIS",
   CRISIS_ACTIVE: "NEGOCIACIÓN EN VIVO",
   RESOLUTION: "RESOLUCIÓN",
@@ -150,8 +151,149 @@ function HostConsole({
       />
 
       <main className="max-w-7xl mx-auto p-3 sm:p-6 flex flex-col gap-5">
+<div className="flex flex-wrap items-center gap-2 sticky top-[52px] z-30 rounded-lg border border-outline-variant/30 bg-surface-container-lowest/90 px-2 py-2 backdrop-blur-md shadow-lg">
+              <span className="font-data text-[10px] uppercase tracking-widest text-outline">
+                Control de ronda
+              </span>
+              <span
+                className={`font-data text-xs font-bold tabular-nums ${
+                  roomState.paused
+                    ? "text-warning-amber animate-pulse"
+                    : roomState.phase === "PLANNING"
+                    ? "text-outline"
+                    : "text-primary"
+                }`}
+              >
+                {roomState.paused
+                  ? `PAUSA ${timeFormatted}`
+                  : roomState.phase === "PLANNING"
+                  ? "SIN RELOJ"
+                  : timeFormatted}
+              </span>
+              {roomState.phase === "LOBBY" && (
+                <>
+                  <span className="font-data text-[10px] text-outline uppercase tracking-widest">
+                    Reservar panel:
+                  </span>
+                  {[4, 5, 6].map((count) => (
+                    <button
+                      key={count}
+                      onClick={() => sendHost({ type: "HOST_SEED_DISTRICTS", count })}
+                      className="px-2.5 py-1.5 rounded-lg bg-surface-container-high hover:bg-surface-variant text-secondary font-data text-xs border border-outline-variant transition-all active:scale-95 cursor-pointer"
+                    >
+                      {count} DISTRITOS
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => sendHost({ type: "HOST_REMOVE_UNCLAIMED" })}
+                    className="px-2.5 py-1.5 rounded-lg bg-surface-container-high hover:bg-surface-variant text-outline font-data text-xs border border-outline-variant transition-all active:scale-95 cursor-pointer"
+                  >
+                    RETIRAR SIN OPERADOR
+                  </button>
+                  <button
+                    onClick={() => sendHost({ type: "HOST_START_GAME" })}
+                    className="flex items-center gap-1.5 bg-primary-container text-on-primary-container px-4 py-1.5 rounded-lg font-data text-xs font-bold tracking-wider hover:opacity-95 active:scale-95 transition-all shadow-[0_0_12px_rgba(43,240,117,0.5)] cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">play_arrow</span>
+                    <span>INICIAR SIMULACIÓN</span>
+                  </button>
+                </>
+              )}
+
+              {roomState.phase === "PLANNING" && (
+                <>
+                  <button
+                    onClick={() => sendHost({ type: "HOST_BEGIN_ROUND" })}
+                    className="flex items-center gap-1.5 bg-primary-container text-on-primary-container px-4 py-1.5 rounded-lg font-data text-xs font-bold tracking-wider hover:opacity-95 active:scale-95 transition-all shadow-[0_0_12px_rgba(43,240,117,0.5)] cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">play_circle</span>
+                    <span>ABRIR CRONÓMETRO ({roomState.announceSeconds}s + {roomState.negotiationSeconds}s)</span>
+                  </button>
+                  <button
+                    onClick={() => sendHost({ type: "HOST_SKIP_ANNOUNCE" })}
+                    className="flex items-center gap-1.5 bg-surface-container-high hover:bg-surface-variant text-secondary px-3 py-1.5 rounded-lg font-data text-xs border border-outline-variant transition-all active:scale-95 cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">fast_forward</span>
+                    <span>SALTAR AL ANUNCIO Y NEGOCIAR YA</span>
+                  </button>
+                </>
+              )}
+
+              {roomState.phase === "CRISIS_ANNOUNCE" && (
+                <button
+                  onClick={() => sendHost({ type: "HOST_SKIP_ANNOUNCE" })}
+                  className="flex items-center gap-1.5 bg-warning-amber text-black px-4 py-1.5 rounded-lg font-data text-xs font-bold tracking-wider hover:opacity-90 active:scale-95 transition-all shadow-md cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-[16px]">fast_forward</span>
+                  <span>ADELANTAR NEGOCIACIÓN</span>
+                </button>
+              )}
+
+              {(roomState.phase === "CRISIS_ANNOUNCE" || roomState.phase === "CRISIS_ACTIVE") && (
+                <>
+                  <button
+                    onClick={() => sendHost({ type: roomState.paused ? "HOST_RESUME" : "HOST_PAUSE" })}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-data text-xs font-bold tracking-wider border transition-all active:scale-95 cursor-pointer ${
+                      roomState.paused
+                        ? "bg-primary-container text-on-primary-container border-primary shadow-[0_0_12px_rgba(43,240,117,0.4)]"
+                        : "bg-surface-container-high text-secondary border-outline-variant hover:bg-surface-variant"
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-[16px]">
+                      {roomState.paused ? "play_arrow" : "pause"}
+                    </span>
+                    <span>{roomState.paused ? "REANUDAR RELOJ" : "PAUSAR RELOJ"}</span>
+                  </button>
+                  <button
+                    onClick={() => sendHost({ type: "HOST_ADD_TIME", seconds: 30 })}
+                    className="flex items-center gap-1.5 bg-surface-container-high hover:bg-surface-variant text-secondary px-3 py-1.5 rounded-lg font-data text-xs border border-outline-variant transition-all active:scale-95 cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">timer</span>
+                    <span>+30 s</span>
+                  </button>
+                </>
+              )}
+
+              {roomState.phase === "CRISIS_ACTIVE" && (
+                <button
+                  onClick={() => sendHost({ type: "HOST_RESOLVE_NOW" })}
+                  className="flex items-center gap-1.5 bg-warning-amber text-black px-4 py-1.5 rounded-lg font-data text-xs font-bold tracking-wider hover:opacity-90 active:scale-95 transition-all shadow-md cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-[16px]">bolt</span>
+                  <span>FORZAR RESOLUCIÓN</span>
+                </button>
+              )}
+
+              {roomState.phase === "RESOLUTION" && (
+                <button
+                  onClick={() => sendHost({ type: "HOST_NEXT_ROUND" })}
+                  className="flex items-center gap-1.5 bg-primary-container text-on-primary-container px-4 py-1.5 rounded-lg font-data text-xs font-bold tracking-wider hover:opacity-95 active:scale-95 transition-all shadow-[0_0_12px_rgba(43,240,117,0.5)] cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-[16px]">leaderboard</span>
+                  <span>
+                    {roomState.currentRound >= roomState.totalRounds
+                      ? "VER CLASIFICACIÓN FINAL"
+                      : "SIGUIENTE RONDA >>"}
+                  </span>
+                </button>
+              )}
+
+              {roomState.phase === "GAME_OVER" && (
+                <button
+                  onClick={() => {
+                    if (window.confirm("¿REINICIAR TODA LA SIMULACIÓN AL VESTÍBULO?")) {
+                      sendHost({ type: "HOST_RESET_GAME" });
+                    }
+                  }}
+                  className="flex items-center gap-1.5 bg-primary-container text-on-primary-container px-4 py-1.5 rounded-lg font-data text-xs font-bold tracking-wider hover:opacity-95 active:scale-95 transition-all shadow-md cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-[16px]">restart_alt</span>
+                  <span>NUEVA SIMULACIÓN</span>
+                </button>
+              )}
+            </div>
         {/* Barra superior: sesión, controles y cronómetro */}
-        <div className="flex flex-col bg-surface-container-lowest rounded-xl p-4 sm:p-5 shadow-2xl gap-4 border border-outline-variant/30 relative overflow-hidden">
+        <div className="flex flex-col bg-surface-container-lowest rounded-xl p-4 sm:p-5 shadow-2xl gap-4 border border-outline-variant/30 relative overflow-clip">
           <div className="absolute -top-10 -left-10 w-48 h-48 bg-primary/10 rounded-full blur-3xl pointer-events-none" />
           <div className="absolute -bottom-10 -right-10 w-48 h-48 bg-error/15 rounded-full blur-3xl pointer-events-none" />
 
@@ -206,86 +348,6 @@ function HostConsole({
                 </button>
               </div>
             </div>
-
-            <div className="flex items-center flex-wrap gap-2">
-              {roomState.phase === "LOBBY" && (
-                <>
-                  <span className="font-data text-[10px] text-outline uppercase tracking-widest">
-                    Reservar panel:
-                  </span>
-                  {[4, 5, 6].map((count) => (
-                    <button
-                      key={count}
-                      onClick={() => sendHost({ type: "HOST_SEED_DISTRICTS", count })}
-                      className="px-2.5 py-1.5 rounded-lg bg-surface-container-high hover:bg-surface-variant text-secondary font-data text-xs border border-outline-variant transition-all active:scale-95 cursor-pointer"
-                    >
-                      {count} DISTRITOS
-                    </button>
-                  ))}
-                  <button
-                    onClick={() => sendHost({ type: "HOST_REMOVE_UNCLAIMED" })}
-                    className="px-2.5 py-1.5 rounded-lg bg-surface-container-high hover:bg-surface-variant text-outline font-data text-xs border border-outline-variant transition-all active:scale-95 cursor-pointer"
-                  >
-                    RETIRAR SIN OPERADOR
-                  </button>
-                  <button
-                    onClick={() => sendHost({ type: "HOST_START_GAME" })}
-                    className="flex items-center gap-1.5 bg-primary-container text-on-primary-container px-4 py-1.5 rounded-lg font-data text-xs font-bold tracking-wider hover:opacity-95 active:scale-95 transition-all shadow-[0_0_12px_rgba(43,240,117,0.5)] cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">play_arrow</span>
-                    <span>INICIAR SIMULACIÓN</span>
-                  </button>
-                </>
-              )}
-
-              {roomState.phase === "CRISIS_ANNOUNCE" && (
-                <button
-                  onClick={() => sendHost({ type: "HOST_SKIP_ANNOUNCE" })}
-                  className="flex items-center gap-1.5 bg-warning-amber text-black px-4 py-1.5 rounded-lg font-data text-xs font-bold tracking-wider hover:opacity-90 active:scale-95 transition-all shadow-md cursor-pointer"
-                >
-                  <span className="material-symbols-outlined text-[16px]">fast_forward</span>
-                  <span>ADELANTAR NEGOCIACIÓN</span>
-                </button>
-              )}
-
-              {roomState.phase === "CRISIS_ACTIVE" && (
-                <button
-                  onClick={() => sendHost({ type: "HOST_RESOLVE_NOW" })}
-                  className="flex items-center gap-1.5 bg-warning-amber text-black px-4 py-1.5 rounded-lg font-data text-xs font-bold tracking-wider hover:opacity-90 active:scale-95 transition-all shadow-md cursor-pointer"
-                >
-                  <span className="material-symbols-outlined text-[16px]">bolt</span>
-                  <span>FORZAR RESOLUCIÓN</span>
-                </button>
-              )}
-
-              {roomState.phase === "RESOLUTION" && (
-                <button
-                  onClick={() => sendHost({ type: "HOST_NEXT_ROUND" })}
-                  className="flex items-center gap-1.5 bg-primary-container text-on-primary-container px-4 py-1.5 rounded-lg font-data text-xs font-bold tracking-wider hover:opacity-95 active:scale-95 transition-all shadow-[0_0_12px_rgba(43,240,117,0.5)] cursor-pointer"
-                >
-                  <span className="material-symbols-outlined text-[16px]">leaderboard</span>
-                  <span>
-                    {roomState.currentRound >= roomState.totalRounds
-                      ? "VER CLASIFICACIÓN FINAL"
-                      : "SIGUIENTE RONDA >>"}
-                  </span>
-                </button>
-              )}
-
-              {roomState.phase === "GAME_OVER" && (
-                <button
-                  onClick={() => {
-                    if (window.confirm("¿REINICIAR TODA LA SIMULACIÓN AL VESTÍBULO?")) {
-                      sendHost({ type: "HOST_RESET_GAME" });
-                    }
-                  }}
-                  className="flex items-center gap-1.5 bg-primary-container text-on-primary-container px-4 py-1.5 rounded-lg font-data text-xs font-bold tracking-wider hover:opacity-95 active:scale-95 transition-all shadow-md cursor-pointer"
-                >
-                  <span className="material-symbols-outlined text-[16px]">restart_alt</span>
-                  <span>NUEVA SIMULACIÓN</span>
-                </button>
-              )}
-            </div>
           </div>
 
           {/* Cronómetro */}
@@ -293,7 +355,11 @@ function HostConsole({
             <div className="flex items-center justify-between w-full px-4 font-data text-[10px] text-on-surface-variant uppercase tracking-widest">
               <span className="flex items-center gap-1.5 text-secondary">
                 <span className="material-symbols-outlined text-[14px] animate-spin">alarm</span>
-                {roomState.phase === "CRISIS_ANNOUNCE"
+                {roomState.paused
+                  ? `Cronómetro PAUSADO // quedan ${roomState.timeRemaining}s`
+                  : roomState.phase === "PLANNING"
+                  ? "Planificación en vivo // el anfitrión abre el cronómetro cuando quiera"
+                  : roomState.phase === "CRISIS_ANNOUNCE"
                   ? `Anuncio de crisis // ${roomState.announceSeconds}s`
                   : roomState.phase === "CRISIS_ACTIVE"
                   ? `Negociación en vivo // ${roomState.negotiationSeconds}s`

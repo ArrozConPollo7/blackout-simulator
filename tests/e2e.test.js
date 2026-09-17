@@ -271,17 +271,29 @@ test("BLACKOUT: GRID COLLAPSE — partida completa end-to-end", async (t) => {
     });
   });
 
-  await t.test("ronda 1: la crisis recorta el gas un 20% y el reloj avanza solo", async () => {
+  await t.test("ronda 1: la crisis se prepara sin reloj y el anfitrión abre el cronómetro", async () => {
     host.send({ type: "HOST_START_GAME" });
-    await waitFor(() => host.state.phase === "CRISIS_ANNOUNCE", { label: "anuncio de crisis" });
+    await waitFor(() => host.state.phase === "PLANNING", { label: "planificación sin reloj" });
 
+    // La crisis y la red recortada ya están a la vista, pero el tiempo no corre:
+    // el salón puede discutir y mover palancas sin presión.
     assert.equal(host.state.currentRound, 1);
     assert.equal(host.state.activeCrisis.round, 1);
     assert.equal(host.state.capacity.maxMW, 1440);
     assert.equal(host.state.capacity.maxGas, 2400);
     assert.equal(host.state.demand.gas, 3000);
+    assert.equal(host.state.deadlineTs, null);
+    assert.equal(host.state.timerRunning, false);
 
-    // El anuncio se abre solo a la negociación al expirar su cronómetro.
+    await sleep(1500);
+    assert.equal(host.state.phase, "PLANNING", "la planificación no avanza sola");
+    assert.equal(host.state.timeRemaining, 0);
+
+    // El anfitrión abre el reloj: anuncio, y de ahí solo a la negociación.
+    host.send({ type: "HOST_BEGIN_ROUND" });
+    await waitFor(() => host.state.phase === "CRISIS_ANNOUNCE", { label: "anuncio de crisis" });
+    assert.ok(host.state.deadlineTs > Date.now(), "el anuncio publica su fecha límite");
+
     await waitFor(() => host.state.phase === "CRISIS_ACTIVE", { label: "negociación en vivo", timeout: 8000 });
     assert.ok(host.state.timeRemaining <= 3);
   });
@@ -304,10 +316,10 @@ test("BLACKOUT: GRID COLLAPSE — partida completa end-to-end", async (t) => {
     assert.equal(host.state.phase, "RESOLUTION");
   });
 
-  await t.test("ronda 2: la cuarentena bloquea los críticos y la red se estabiliza cediendo industria", async () => {
+  await t.test("ronda 2: se planifica sin reloj, los críticos quedan bloqueados y la red se estabiliza", async () => {
     host.send({ type: "HOST_NEXT_ROUND" });
-    await waitFor(() => host.state.phase === "CRISIS_ANNOUNCE" && host.state.currentRound === 2, {
-      label: "anuncio de la ronda 2",
+    await waitFor(() => host.state.phase === "PLANNING" && host.state.currentRound === 2, {
+      label: "planificación de la ronda 2",
     });
 
     // Guion de la semilla 70: la crisis 2 (sequía, -35% eléctrico) más el
@@ -323,8 +335,8 @@ test("BLACKOUT: GRID COLLAPSE — partida completa end-to-end", async (t) => {
     // Los críticos quedan blindados para todos: ni la mesa ni el anfitrión.
     await assertLocked(host, teamA, "D-01", "critical");
 
-    // Todas las mesas ceden la industria: las dos humanas por su mando, los
-    // otros dos distritos por override del anfitrión (mesas sin teléfono).
+    // En planificación las palancas ya funcionan: el salón puede dejar pactado
+    // el corte antes de que empiece a correr el tiempo.
     teamA.send({ type: "TOGGLE_SECTOR", sector: "industry", state: false });
     teamB.send({ type: "TOGGLE_SECTOR", sector: "industry", state: false });
     const d3 = teamByDistrict(host.state, "D-03");
@@ -339,6 +351,33 @@ test("BLACKOUT: GRID COLLAPSE — partida completa end-to-end", async (t) => {
       { label: "las 4 industrias cedidas" }
     );
     assert.equal(host.state.demand.gas, 4 * (250 + 100));
+    assert.equal(host.state.phase, "PLANNING", "el recorte se pactó sin reloj");
+
+    // El anfitrión abre el reloj y lo PAUSA enseguida: el tiempo queda congelado.
+    host.send({ type: "HOST_BEGIN_ROUND" });
+    host.send({ type: "HOST_PAUSE" });
+    await waitFor(() => host.state.paused === true, { label: "cronómetro pausado" });
+
+    const congelado = host.state.timeRemaining;
+    assert.ok(congelado > 0 && congelado <= 2, `quedaban pocos segundos: ${congelado}`);
+    assert.equal(host.state.deadlineTs, null);
+    await sleep(2000);
+    assert.equal(host.state.timeRemaining, congelado, "pausado no descuenta segundos");
+    assert.equal(host.state.phase, "CRISIS_ANNOUNCE");
+
+    // +30 s se suma a lo que quedaba, y reanudar reprograma la fecha límite.
+    host.send({ type: "HOST_ADD_TIME", seconds: 30 });
+    await waitFor(() => host.state.timeRemaining === congelado + 30, { label: "+30 s sobre la pausa" });
+    assert.equal(host.state.deadlineTs, null);
+
+    host.send({ type: "HOST_RESUME" });
+    await waitFor(() => host.state.paused === false && host.state.deadlineTs, { label: "cronómetro reanudado" });
+    const restante = Math.round((host.state.deadlineTs - Date.now()) / 1000);
+    assert.ok(restante >= congelado + 28 && restante <= congelado + 31, `reanudó con ${restante}s`);
+
+    // Y para no esperar 30 s en la prueba, el anfitrión adelanta la negociación.
+    host.send({ type: "HOST_SKIP_ANNOUNCE" });
+    await waitFor(() => host.state.phase === "CRISIS_ACTIVE", { label: "negociación en vivo", timeout: 8000 });
 
     await waitFor(() => host.state.phase === "RESOLUTION", { label: "resolución de la ronda 2", timeout: 10000 });
     const resolution = host.state.lastResolution;
@@ -357,9 +396,11 @@ test("BLACKOUT: GRID COLLAPSE — partida completa end-to-end", async (t) => {
 
   await t.test("rondas 3 y 4: la demanda civil se duplica y el dilema final exige apagar todas las industrias", async () => {
     host.send({ type: "HOST_NEXT_ROUND" });
-    await waitFor(() => host.state.currentRound === 3 && host.state.phase === "CRISIS_ANNOUNCE", {
-      label: "anuncio de la ronda 3",
+    await waitFor(() => host.state.currentRound === 3 && host.state.phase === "PLANNING", {
+      label: "planificación de la ronda 3",
     });
+    host.send({ type: "HOST_BEGIN_ROUND" });
+    await waitFor(() => host.state.phase === "CRISIS_ANNOUNCE", { label: "anuncio de la ronda 3" });
 
     // Guion de la semilla 70: la crisis 3 duplica el consumo civil y el robo de
     // cable del anillo sur recorta un 8% el techo eléctrico.
