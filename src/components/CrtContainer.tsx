@@ -74,20 +74,6 @@ export function CrtContainer({
       {/* Haz de Electrones en Movimiento */}
       <div className="crt-beam z-40 pointer-events-none" />
 
-      {/* Remaches de Esquina de Hardware */}
-      <div className="fixed top-2 left-2 z-50 pointer-events-none hidden sm:flex items-center gap-1 opacity-50">
-        <div className="w-2.5 h-2.5 rounded-full bg-surface-variant flex items-center justify-center border border-outline-variant">
-          <div className="w-1 h-0.5 bg-outline rotate-45" />
-        </div>
-        <span className="text-[9px] font-data text-outline tracking-tighter">BAHÍA_01A</span>
-      </div>
-      <div className="fixed top-2 right-2 z-50 pointer-events-none hidden sm:flex items-center gap-1 opacity-50">
-        <span className="text-[9px] font-data text-outline tracking-tighter">TERMINAL_SEC</span>
-        <div className="w-2.5 h-2.5 rounded-full bg-surface-variant flex items-center justify-center border border-outline-variant">
-          <div className="w-1 h-0.5 bg-outline -rotate-45" />
-        </div>
-      </div>
-
       {children}
 
       {showBottomNav && <BottomNav />}

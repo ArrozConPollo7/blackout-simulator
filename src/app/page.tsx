@@ -29,7 +29,7 @@ function readStorage(key: string, fallback = ""): string {
 
 const PHASE_LABEL: Record<string, string> = {
   LOBBY: "VESTÍBULO // ESPERANDO ARRANQUE",
-  PLANNING: "PLANIFICACIÓN // SIN RELOJ",
+  PLANNING: "PLANIFICACIÓN",
   CRISIS_ANNOUNCE: "ANUNCIO DE CRISIS",
   CRISIS_ACTIVE: "CRISIS EN VIVO // NEGOCIAR",
   RESOLUTION: "CICLO RESUELTO",
@@ -280,8 +280,8 @@ export default function DistrictControllerPage() {
                       <span className="font-data text-[10px] text-secondary font-bold">{district.id}</span>
                       <span className="material-symbols-outlined text-[14px] text-primary">bolt</span>
                     </div>
-                    <span className="font-headline text-xs font-bold text-on-surface truncate">{district.name}</span>
-                    <span className="font-data text-[9px] text-outline truncate">
+                    <span className="font-headline text-xs font-bold text-on-surface leading-tight">{district.name}</span>
+                    <span className="font-data text-[9px] text-outline leading-tight">
                       {taken ? `OCUPADO: ${occupant?.operator ?? "MESA"}` : occupant ? "RESERVADO // LIBRE" : "LIBRE"}
                     </span>
                   </button>
@@ -322,18 +322,18 @@ export default function DistrictControllerPage() {
       <Header title="Mando de Distrito" subtitle={versionLabel} pin={roomState?.pin || pinInput} role="team" />
 
       <main className="max-w-md mx-auto w-full p-3 sm:p-4 flex flex-col gap-3">
-        <div className="flex items-center justify-between bg-surface-container-lowest p-2.5 rounded-lg border border-surface-container-high font-data text-xs">
-          <div className="flex items-center gap-2">
+        <div className="flex items-center justify-between gap-2 bg-surface-container-lowest p-2.5 rounded-lg border border-surface-container-high font-data text-xs">
+          <div className="flex items-center gap-2 min-w-0">
             <span
-              className={`w-2.5 h-2.5 rounded-full ${
+              className={`w-2.5 h-2.5 shrink-0 rounded-full ${
                 roomState?.phase === "CRISIS_ACTIVE" ? "bg-error animate-ping" : "bg-primary animate-pulse"
               }`}
             />
-            <span className="font-bold uppercase tracking-wider text-secondary">
+            <span className="font-bold uppercase tracking-wider text-secondary whitespace-nowrap truncate">
               {PHASE_LABEL[roomState?.phase ?? "LOBBY"]}
             </span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0 whitespace-nowrap">
             <span className="text-outline">RONDA</span>
             <span className="font-headline text-sm text-primary font-bold">
               {roomState?.currentRound || 0}/{roomState?.totalRounds || 4}
@@ -342,12 +342,18 @@ export default function DistrictControllerPage() {
               className={`font-headline text-sm ${
                 roomState?.paused
                   ? "text-warning-amber animate-pulse"
+                  : roomState?.phase === "PLANNING"
+                  ? "text-secondary"
                   : isUrgent
                   ? "text-error animate-pulse"
                   : "text-primary"
               }`}
             >
-              {roomState?.paused ? `PAUSA ${timeFormatted}` : timeFormatted}
+              {roomState?.paused
+                ? `PAUSA ${timeFormatted}`
+                : roomState?.phase === "PLANNING"
+                ? "SIN RELOJ"
+                : timeFormatted}
             </span>
             <button
               onClick={handleLeave}
@@ -367,7 +373,7 @@ export default function DistrictControllerPage() {
                 <span className="px-1.5 py-0.5 rounded bg-surface-variant text-primary-fixed font-data text-[10px] uppercase font-bold">
                   {district.id}
                 </span>
-                <span className="font-data text-[10px] text-on-surface-variant truncate">{district.tag}</span>
+                <span className="font-data text-[10px] text-on-surface-variant leading-tight">{district.tag}</span>
               </div>
               <h2 className="font-headline text-xl text-primary tracking-tight uppercase leading-tight font-bold mt-0.5 phosphor-glow-green">
                 {myTeam.name}
@@ -411,7 +417,8 @@ export default function DistrictControllerPage() {
                 Consumo del distrito
               </span>
               <span className="font-headline text-lg font-bold text-primary">
-                {demand.mw} MW
+                {demand.mw}
+                <span className="font-data text-[11px] text-outline font-normal"> MW</span>
                 <span className="font-data text-[11px] text-secondary-fixed-dim"> / {demand.gas} m3</span>
               </span>
               <span className="font-data text-[10px] text-on-surface-variant">

@@ -181,23 +181,7 @@ export function HostAuthGate({ children }: HostAuthGateProps) {
     );
   }
 
-  return (
-    <div className="relative">
-      <div className="fixed top-[5.5rem] right-3 z-50">
-        <button
-          onClick={() => {
-            sound.playRelayClick(false);
-            invalidate();
-          }}
-          className="px-2 py-1 rounded bg-error/20 hover:bg-error text-error hover:text-white border border-error text-[10px] font-data uppercase tracking-wider transition-colors flex items-center gap-1 shadow-lg cursor-pointer"
-          title="Cerrar sesión de anfitrión"
-        >
-          <span className="material-symbols-outlined text-[14px]">lock</span>
-          <span className="hidden sm:inline">BLOQUEAR</span>
-        </button>
-      </div>
-
-      {children({ passcode, invalidate })}
-    </div>
-  );
+  // El botón de bloquear vive dentro de la consola (fila de control): aquí solo
+  // se expone el callback para no dejar un botón flotante encima del tablero.
+  return <div className="relative">{children({ passcode, invalidate })}</div>;
 }

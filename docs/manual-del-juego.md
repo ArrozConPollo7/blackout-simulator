@@ -152,7 +152,9 @@ Controles del anfitrión durante la partida:
 | `+30 s` | Anuncio o negociación | Suma 30 segundos a la fase (acumulable) |
 | `FORZAR RESOLUCIÓN` | Negociación | Cierra la ronda antes de tiempo si ya hay acuerdo |
 | `SIGUIENTE RONDA` | Resolución | Prepara la ronda siguiente (planificación sin reloj) |
-| `NUEVA SIMULACIÓN` | Fin de partida | Vuelve al vestíbulo y expulsa las sesiones de las mesas |
+| `REINICIAR PARTIDA` | **Cualquier fase de partida** | Vuelve al vestíbulo, borra el marcador y expulsa las sesiones de las mesas (pide confirmación) |
+| `NUEVA SIMULACIÓN` | Fin de partida | Lo mismo, al terminar la partida |
+| `BLOQUEAR` | Cualquier fase | Cierra la sesión de anfitrión: el proyector vuelve a pedir la clave maestra |
 
 Esta fila de control queda **fija bajo el encabezado** mientras se desplaza el tablero: para avanzar de ronda no
 hay que buscar el botón.
@@ -575,6 +577,9 @@ aritmética del documento sin azar; los sorteos se prueban aparte con semillas f
       `PAUSAR RELOJ` y sigues cuando quieras; si se descarrila, `FORZAR RESOLUCIÓN`.
 - [ ] Usar `RESOLVER AHORA` si el acuerdo llegó antes de tiempo.
 - [ ] Al acabar: leer el parte distrito por distrito y cerrar con las menciones (Ejemplar, Mártir, Parásito).
+- [ ] Si la partida se descarrila (un grupo se atasca, alguien desconfigura su distrito, el tiempo no alcanza):
+      `REINICIAR PARTIDA` en la fila de control devuelve todo al vestíbulo sin cerrar el navegador. Las mesas
+      vuelven a tomar distrito en segundos.
 
 **Después**
 

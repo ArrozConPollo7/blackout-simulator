@@ -444,5 +444,28 @@ test("BLACKOUT: GRID COLLAPSE — partida completa end-to-end", async (t) => {
     assert.equal(teamA.teamId, null);
   });
 
+  await t.test("el anfitrión puede reiniciar la partida en cualquier fase y volver al vestíbulo", async () => {
+    // El botón REINICIAR PARTIDA de la consola manda HOST_RESET_GAME: sirve para
+    // cortar una partida que se descarriló a mitad de ronda. Tras el reinicio
+    // anterior la malla quedó vacía, así que el anfitrión vuelve a reservar el panel.
+    host.send({ type: "HOST_SEED_DISTRICTS", count: 4 });
+    await waitFor(() => Object.keys(host.state.teams).length === 4, { label: "panel reservado otra vez" });
+
+    host.send({ type: "HOST_START_GAME" });
+    await waitFor(() => host.state.phase === "PLANNING" && host.state.currentRound === 1, {
+      label: "ronda 1 preparada sin reloj",
+    });
+
+    host.send({ type: "HOST_RESET_GAME" });
+    await waitFor(() => host.state.phase === "LOBBY" && Object.keys(host.state.teams).length === 0, {
+      label: "vuelta al vestíbulo a mitad de ronda",
+    });
+    assert.equal(host.state.currentRound, 0);
+    assert.equal(host.state.blackoutCount, 0);
+    assert.equal(host.state.activeCrisis, null);
+    assert.equal(host.state.deadlineTs, null);
+    assert.ok(host.state.logs.some((log) => /REINICIADA POR EL ANFITRIÓN/.test(log.message)));
+  });
+
   console.log(serverLog.split("\n").slice(0, 4).join("\n"));
 });

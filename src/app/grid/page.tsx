@@ -142,7 +142,8 @@ export default function GridOverviewPage() {
             <div className="flex flex-col items-end">
               <span className="text-outline uppercase text-[10px]">Demanda / Techo eléctrico</span>
               <span className={`font-headline text-base font-bold ${overloadMW ? "text-error" : "text-secondary"}`}>
-                {totalMW.toLocaleString("es-CO")} / {(capacity?.maxMW ?? 0).toLocaleString("es-CO")} MW
+                {totalMW.toLocaleString("es-CO")} / {(capacity?.maxMW ?? 0).toLocaleString("es-CO")}
+                <span className="font-data text-[11px] text-outline font-normal"> MW</span>
               </span>
             </div>
             <div className="flex flex-col items-end">
@@ -251,7 +252,7 @@ export default function GridOverviewPage() {
                       {node.district.id}
                     </text>
                     <text y="-3" textAnchor="middle" fill="#e4e1f0" fontSize="8" fontFamily="monospace">
-                      {node.district.name.slice(0, 16)}
+                      {node.district.name}
                     </text>
                     <text y="10" textAnchor="middle" fill="#2bf075" fontSize="9" fontFamily="monospace">
                       {districtDemand?.mw ?? 0} MW / {districtDemand?.gas ?? 0} m3

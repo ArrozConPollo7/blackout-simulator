@@ -304,9 +304,19 @@ capacidad_gas = 750 m³ × nº_distritos × multiplicador_gas(crisis)      × �
 <td>Prepara la ronda siguiente (planificación sin reloj)</td>
 </tr>
 <tr>
+<td><code>REINICIAR PARTIDA</code></td>
+<td><strong>Cualquier fase de partida</strong></td>
+<td>Vuelve al vestíbulo, borra el marcador y expulsa las sesiones de las mesas (pide confirmación)</td>
+</tr>
+<tr>
 <td><code>NUEVA SIMULACIÓN</code></td>
 <td>Fin de partida</td>
-<td>Vuelve al vestíbulo y expulsa las sesiones de las mesas</td>
+<td>Lo mismo, al terminar la partida</td>
+</tr>
+<tr>
+<td><code>BLOQUEAR</code></td>
+<td>Cualquier fase</td>
+<td>Cierra la sesión de anfitrión: el proyector vuelve a pedir la clave maestra</td>
 </tr>
 </tbody></table>
 <p>Esta fila de control queda <strong>fija bajo el encabezado</strong> mientras se desplaza el tablero: para avanzar de ronda no</p>
@@ -964,7 +974,10 @@ node scripts/reference-game.js --scan 300   # balance: ¿tiene salida cada semil
 <ul>
 <li>[ ] Usar <code>RESOLVER AHORA</code> si el acuerdo llegó antes de tiempo.</li>
 <li>[ ] Al acabar: leer el parte distrito por distrito y cerrar con las menciones (Ejemplar, Mártir, Parásito).</li>
+<li>[ ] Si la partida se descarrila (un grupo se atasca, alguien desconfigura su distrito, el tiempo no alcanza):</li>
 </ul>
+<p>      <code>REINICIAR PARTIDA</code> en la fila de control devuelve todo al vestíbulo sin cerrar el navegador. Las mesas</p>
+<p>      vuelven a tomar distrito en segundos.</p>
 <p><strong>Después</strong></p>
 <ul>
 <li>[ ] Guardar la semilla y la lista de incidentes del acta final: la próxima clase puede repetir exactamente la</li>

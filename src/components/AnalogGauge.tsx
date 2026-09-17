@@ -101,15 +101,18 @@ export function AnalogGauge({
           style={{ left: `calc(${needlePercent}% - 3px)` }}
         />
 
-        <span className="absolute inset-0 flex items-center justify-center font-data text-[10px] text-on-surface-variant/80 select-none">
-          {over ? `EXCESO DE ${(currentValue - limitValue).toLocaleString("es-CO")} ${unit}` : ""}
-        </span>
       </div>
 
-      <div className="flex items-center justify-between text-on-surface-variant font-data text-[10px]">
+      <div className="flex items-center justify-between gap-2 text-on-surface-variant font-data text-[10px]">
         <span>0 {unit}</span>
         {nominalPercent !== null && <span className="text-secondary">NOMINAL {nominalValue?.toLocaleString("es-CO")}</span>}
-        <span className="text-error font-bold">TECHO {limitValue.toLocaleString("es-CO")}</span>
+        {over ? (
+          <span className="bg-error/15 border border-error/50 text-error font-bold px-1.5 py-0.5 rounded">
+            EXCESO DE {(currentValue - limitValue).toLocaleString("es-CO")} {unit}
+          </span>
+        ) : (
+          <span className="text-error font-bold">TECHO {limitValue.toLocaleString("es-CO")}</span>
+        )}
       </div>
     </div>
   );

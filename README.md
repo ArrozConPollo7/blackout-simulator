@@ -151,7 +151,9 @@ Cada clase que juega en paralelo usa su **propio PIN de sala**, y eso la aísla 
    y *Distrito Parásito*.
 
 Entre rondas no hay prisa: tras la resolución la sala se queda quieta hasta que el anfitrión abre la siguiente
-planificación, así que el ritmo de la clase lo marca él y no el cronómetro.
+planificación, así que el ritmo de la clase lo marca él y no el cronómetro. La fila de control (pegada bajo el
+encabezado, con el reloj) tiene además **`REINICIAR PARTIDA`** en cualquier fase —vuelve al vestíbulo pidiendo
+confirmación— y **`BLOQUEAR`** para cerrar la sesión de anfitrión.
 
 ### Balance
 

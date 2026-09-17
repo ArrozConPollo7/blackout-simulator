@@ -52,9 +52,12 @@ const config: Config = {
         "warning-amber": "#ffb000",
       },
       fontFamily: {
-        mono: ["Space Mono", "JetBrains Mono", "Courier New", "monospace"],
-        headline: ["Space Mono", "monospace"],
-        data: ["JetBrains Mono", "monospace"],
+        // Respaldos explícitos: si la webfont no trae un glifo (p. ej. los puntos
+        // suspensivos de un texto truncado), se resuelve en una fuente del sistema
+        // en vez de dibujar un recuadro.
+        mono: ["Space Mono", "JetBrains Mono", "DejaVu Sans Mono", "Consolas", "Courier New", "monospace"],
+        headline: ["Space Mono", "JetBrains Mono", "DejaVu Sans Mono", "Consolas", "monospace"],
+        data: ["JetBrains Mono", "DejaVu Sans Mono", "Consolas", "monospace"],
       },
       spacing: {
         "space-xs": "0.25rem",

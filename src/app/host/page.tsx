@@ -24,7 +24,13 @@ const PIN = "VOLT";
 export default function HostProjectorPage() {
   return (
     <HostAuthGate>
-      {({ passcode, invalidate }) => <HostConsole passcode={passcode} onAuthFailed={invalidate} />}
+      {({ passcode, invalidate }) => (
+        <HostConsole
+          passcode={passcode}
+          onAuthFailed={invalidate}
+          onLock={() => invalidate("SESIÓN DE ANFITRIÓN CERRADA // INGRESA LA CLAVE MAESTRA PARA VOLVER")}
+        />
+      )}
     </HostAuthGate>
   );
 }
@@ -41,9 +47,11 @@ const PHASE_LABEL: Record<string, string> = {
 function HostConsole({
   passcode,
   onAuthFailed,
+  onLock,
 }: {
   passcode: string;
   onAuthFailed: (reason?: string | null) => void;
+  onLock: () => void;
 }) {
   const [screenShake, setScreenShake] = useState(false);
   const [violentShake, setViolentShake] = useState(false);
@@ -151,10 +159,18 @@ function HostConsole({
       />
 
       <main className="max-w-7xl mx-auto p-3 sm:p-6 flex flex-col gap-5">
-<div className="flex flex-wrap items-center gap-2 sticky top-[52px] z-30 rounded-lg border border-outline-variant/30 bg-surface-container-lowest/90 px-2 py-2 backdrop-blur-md shadow-lg">
+<div className="flex flex-wrap items-center gap-2 sticky top-[76px] z-50 rounded-lg border border-outline-variant/30 bg-[#0c0c18] px-2 py-2 shadow-lg [&>button]:shrink-0 [&>button]:whitespace-nowrap">
               <span className="font-data text-[10px] uppercase tracking-widest text-outline">
                 Control de ronda
               </span>
+              <button
+                onClick={onLock}
+                className="flex items-center gap-1 bg-error/20 hover:bg-error text-error hover:text-white border border-error px-2 py-1 rounded font-data text-[10px] uppercase tracking-wider transition-colors cursor-pointer"
+                title="Cerrar la sesión de anfitrión"
+              >
+                <span className="material-symbols-outlined text-[14px]">lock</span>
+                <span>Bloquear</span>
+              </button>
               <span
                 className={`font-data text-xs font-bold tabular-nums ${
                   roomState.paused
@@ -207,14 +223,17 @@ function HostConsole({
                     className="flex items-center gap-1.5 bg-primary-container text-on-primary-container px-4 py-1.5 rounded-lg font-data text-xs font-bold tracking-wider hover:opacity-95 active:scale-95 transition-all shadow-[0_0_12px_rgba(43,240,117,0.5)] cursor-pointer"
                   >
                     <span className="material-symbols-outlined text-[16px]">play_circle</span>
-                    <span>ABRIR CRONÓMETRO ({roomState.announceSeconds}s + {roomState.negotiationSeconds}s)</span>
+                    <span>ABRIR CRONÓMETRO</span>
+                    <span className="font-data text-[10px] opacity-70">
+                      ({roomState.announceSeconds}s + {roomState.negotiationSeconds}s)
+                    </span>
                   </button>
                   <button
                     onClick={() => sendHost({ type: "HOST_SKIP_ANNOUNCE" })}
                     className="flex items-center gap-1.5 bg-surface-container-high hover:bg-surface-variant text-secondary px-3 py-1.5 rounded-lg font-data text-xs border border-outline-variant transition-all active:scale-95 cursor-pointer"
                   >
                     <span className="material-symbols-outlined text-[16px]">fast_forward</span>
-                    <span>SALTAR AL ANUNCIO Y NEGOCIAR YA</span>
+                    <span>NEGOCIAR YA</span>
                   </button>
                 </>
               )}
@@ -275,6 +294,25 @@ function HostConsole({
                       ? "VER CLASIFICACIÓN FINAL"
                       : "SIGUIENTE RONDA >>"}
                   </span>
+                </button>
+              )}
+
+              {roomState.phase !== "LOBBY" && roomState.phase !== "GAME_OVER" && (
+                <button
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        "¿REINICIAR TODA LA SIMULACIÓN?\n\nLa partida vuelve al vestíbulo, se borra el marcador y cada mesa tendrá que volver a tomar su distrito."
+                      )
+                    ) {
+                      sendHost({ type: "HOST_RESET_GAME" });
+                    }
+                  }}
+                  className="ml-auto flex items-center gap-1.5 bg-error-container/70 hover:bg-error text-on-error-container hover:text-on-error px-3 py-1.5 rounded-lg font-data text-xs font-bold tracking-wider border border-error transition-all active:scale-95 cursor-pointer"
+                  title="Volver al vestíbulo en cualquier momento"
+                >
+                  <span className="material-symbols-outlined text-[16px]">restart_alt</span>
+                  <span>REINICIAR PARTIDA</span>
                 </button>
               )}
 
@@ -385,17 +423,25 @@ function HostConsole({
             <div className="flex items-baseline gap-3 my-1">
               <span
                 className={`text-5xl sm:text-7xl font-headline font-bold tracking-tight ${
-                  isUrgent
+                  roomState.phase === "PLANNING"
+                    ? "text-secondary drop-shadow-[0_0_12px_rgba(0,245,255,0.4)]"
+                    : roomState.paused
+                    ? "text-warning-amber drop-shadow-[0_0_15px_rgba(255,176,0,0.6)]"
+                    : isUrgent
                     ? "text-error drop-shadow-[0_0_20px_rgba(255,27,58,0.9)] animate-violent-jitter"
                     : overMW || overGas
                     ? "text-warning-amber drop-shadow-[0_0_15px_rgba(255,176,0,0.6)] animate-jitter"
                     : "text-primary drop-shadow-[0_0_15px_rgba(43,240,117,0.6)]"
                 }`}
               >
-                {timeFormatted}
+                {roomState.phase === "PLANNING" ? "SIN RELOJ" : timeFormatted}
               </span>
               <span className="font-data text-xs text-on-surface-variant tracking-widest uppercase">
-                seg restantes
+                {roomState.phase === "PLANNING"
+                  ? "el cronómetro lo abres tú"
+                  : roomState.paused
+                  ? "reloj pausado"
+                  : "seg restantes"}
               </span>
             </div>
 
@@ -603,7 +649,7 @@ function HostConsole({
                         >
                           {team.districtId}
                         </span>
-                        <span className="font-headline text-base tracking-tight font-bold text-on-surface truncate">
+                        <span className="font-headline text-base tracking-tight font-bold text-on-surface leading-tight">
                           {team.name}
                         </span>
                         <span
@@ -874,7 +920,7 @@ function HostConsole({
                       #{index + 1}
                     </div>
                     <div className="flex flex-col min-w-0">
-                      <span className="font-headline text-base text-on-surface font-bold truncate">
+                      <span className="font-headline text-base text-on-surface font-bold leading-tight">
                         {entry.districtId} {entry.teamName}
                       </span>
                       <span className="font-data text-[11px] text-on-surface-variant">
