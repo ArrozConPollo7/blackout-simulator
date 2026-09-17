@@ -128,6 +128,8 @@ src/app/grid/page.tsx     Visión general de la red (topología, osciloscopio, r
 src/app/rules/page.tsx    Manual de reglas para el aula (sectores, crisis e incidentes)
 docs/manual-del-juego.md  Manual completo: reglas, aritmética, guion de clase y montaje
 scripts/reference-game.js Partida de referencia sin interfaz + barrido de semillas (balance)
+scripts/drive-room.js     Utilidad de dev: abre una sala y salta a una ronda concreta por WebSocket
+scripts/build-manual-html.py  Convierte el manual a HTML imprimible (base del PDF)
 tests/engine.test.js      Aritmética del documento y del sorteo de incidentes (node:test)
 tests/e2e.test.js         Partida completa contra el servidor Node (puerto 3999)
 tests/worker.e2e.test.js  Partida completa contra wrangler dev (Durable Objects)
