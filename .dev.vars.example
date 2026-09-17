@@ -1,0 +1,3 @@
+# Secretos locales para `npm run worker:dev` (Cloudflare lee .dev.vars; el .dev.vars real está en .gitignore).
+# La clave del proyector es NUMÉRICA: el teclado en pantalla solo acepta dígitos.
+HOST_PASSCODE=1984

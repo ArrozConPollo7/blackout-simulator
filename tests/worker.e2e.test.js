@@ -131,6 +131,10 @@ test("Blackout en Cloudflare Workers + Durable Objects", async (t) => {
       // Node (ronda 2 = cuarentena, que no recorta capacidad).
       "--var",
       "GAME_SEED:70",
+      // La clave maestra ya no vive en `vars` del wrangler.jsonc (en producción es un
+      // secreto): la prueba la pasa explícitamente para no depender de .dev.vars.
+      "--var",
+      "HOST_PASSCODE:1984",
     ],
     { cwd: ROOT, detached: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" } }
   );

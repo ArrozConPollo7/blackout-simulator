@@ -774,12 +774,26 @@ scripts/reference-game.js partida de referencia sin interfaz (números del manua
 <p>duerman y con el estado persistido (sobrevive a reinicios y despliegues).</p>
 <pre><code>
 npx wrangler login                    # una vez, con tu cuenta de Cloudflare
-npx wrangler secret put HOST_PASSCODE # clave maestra real para internet (no la de por defecto)
-npm run worker:deploy                 # compila la interfaz estática y publica Worker + Durable Objects
+npx wrangler secret put HOST_PASSCODE # 1º el secreto (numérico, interactivo): NO la clave por defecto
+npm run worker:deploy                 # 2º compila la interfaz estática y publica Worker + Durable Objects
 </code></pre>
+<p>El valor se escribe en el prompt de wrangler, no en la línea de comandos (<code>HOST_PASSCODE=1234 npx wrangler …</code> no</p>
+<p>crea el secreto) y debe ser <strong>numérico</strong>, porque el teclado en pantalla del proyector solo acepta dígitos.</p>
+<p><code>wrangler.jsonc</code> no lleva <code>vars.HOST_PASSCODE</code> a propósito: un <code>vars</code> con ese nombre sobrescribiría el secreto en</p>
+<p>cada despliegue, y desplegar sin secreto deja al Durable Object sin clave (rechaza las órdenes del proyector), así</p>
+<p>que <strong>el secreto se pone antes de desplegar</strong>. Verifícalo con <code>npx wrangler secret list</code>.</p>
 <p>Wrangler imprime la URL (<code>https://blackout-grid-collapse.&lt;subdominio&gt;.workers.dev</code>). Proyector: <code>&lt;url&gt;/host/</code>.</p>
 <p>Mandos: <code>&lt;url&gt;/</code> desde cualquier móvil. Prueba local antes de publicar con <code>npm run worker:dev</code></p>
 <p>(workerd en <code>http://127.0.0.1:8788</code>).</p>
+<p><strong>Dominio propio.</strong> No hay que tocar código: la interfaz se resuelve contra <code>window.location</code> (el socket pasa a</p>
+<p><code>wss://</code> en https) y la URL de los mandos es el origen del proyector. Con la zona del dominio en la misma cuenta</p>
+<p>de Cloudflare, se añade un <em>Custom Domain</em> en el dashboard (Worker → <em>Settings</em> → <em>Domains &amp; Routes</em> → <em>Add</em> →</p>
+<p><code>juego.tudominio.com</code>) o se declara en <code>wrangler.jsonc</code>:</p>
+<pre><code>
+&quot;routes&quot;: [{ &quot;pattern&quot;: &quot;juego.tudominio.com&quot;, &quot;custom_domain&quot;: true }]
+</code></pre>
+<p>y se vuelve a desplegar (<code>npm run worker:deploy</code>). El certificado TLS es automático y el <code>workers.dev</code> sigue</p>
+<p>funcionando en paralelo. Redesplegar no pierde la partida en curso: el estado vive en el Durable Object.</p>
 <h3 id="opción-b--lan-sin-internet-servidor-node">Opción B — LAN sin internet (servidor Node)</h3>
 <pre><code>
 npm install          # una vez

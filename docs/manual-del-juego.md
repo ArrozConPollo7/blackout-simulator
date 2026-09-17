@@ -429,9 +429,15 @@ duerman y con el estado persistido (sobrevive a reinicios y despliegues).
 
 ```bash
 npx wrangler login                    # una vez, con tu cuenta de Cloudflare
-npx wrangler secret put HOST_PASSCODE # clave maestra real para internet (no la de por defecto)
-npm run worker:deploy                 # compila la interfaz estática y publica Worker + Durable Objects
+npx wrangler secret put HOST_PASSCODE # 1º el secreto (numérico, interactivo): NO la clave por defecto
+npm run worker:deploy                 # 2º compila la interfaz estática y publica Worker + Durable Objects
 ```
+
+El valor se escribe en el prompt de wrangler, no en la línea de comandos (`HOST_PASSCODE=1234 npx wrangler …` no
+crea el secreto) y debe ser **numérico**, porque el teclado en pantalla del proyector solo acepta dígitos.
+`wrangler.jsonc` no lleva `vars.HOST_PASSCODE` a propósito: un `vars` con ese nombre sobrescribiría el secreto en
+cada despliegue, y desplegar sin secreto deja al Durable Object sin clave (rechaza las órdenes del proyector), así
+que **el secreto se pone antes de desplegar**. Verifícalo con `npx wrangler secret list`.
 
 Wrangler imprime la URL (`https://blackout-grid-collapse.<subdominio>.workers.dev`). Proyector: `<url>/host/`.
 Mandos: `<url>/` desde cualquier móvil. Prueba local antes de publicar con `npm run worker:dev`

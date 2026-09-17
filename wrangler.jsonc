@@ -26,8 +26,10 @@
   ],
   "observability": {
     "enabled": true
-  },
-  "vars": {
-    "HOST_PASSCODE": "1984"
   }
+  // Sin `vars`: la clave maestra del anfitrión va como SECRETO — `npx wrangler secret put HOST_PASSCODE`.
+  // Un `vars.HOST_PASSCODE` con el mismo nombre SOBRESCRIBE el secreto en cada despliegue (wrangler avisa:
+  // "Configuration values (...) conflict with existing remote secrets"). Y sin secreto ni var, el Durable
+  // Object no tiene clave y rechaza toda orden del proyector.
+  // Desarrollo local (`npm run worker:dev`): copia .dev.vars.example a .dev.vars.
 }

@@ -43,13 +43,24 @@ Cada sala vive en su propio **Durable Object**: autoridad única, WebSocket nati
 duerman y con el estado guardado en el almacenamiento del objeto (sobrevive a reinicios y despliegues).
 
 ```bash
-npx wrangler login                 # tu cuenta de Cloudflare (una vez)
-npx wrangler secret put HOST_PASSCODE   # clave maestra de verdad para internet
-npm run worker:deploy              # compila la interfaz estática y publica Worker + Durable Objects
+npx wrangler login                       # tu cuenta de Cloudflare (una vez)
+npx wrangler secret put HOST_PASSCODE    # 1º el secreto: wrangler lo pide de forma interactiva
+npm run worker:deploy                    # 2º publica Worker + Durable Objects
 ```
 
 Wrangler imprime la URL (`https://blackout-grid-collapse.<tu-subdominio>.workers.dev`). El primer despliegue
 pregunta si quieres registrar un subdominio `workers.dev`: acepta y elige el que prefieras.
+
+`HOST_PASSCODE` es el **nombre** de la variable: el valor se escribe en el prompt interactivo de wrangler (no se
+pasa en la línea de comandos — `HOST_PASSCODE=1234 npx wrangler …` **no** crea el secreto). Es **numérico**: el
+teclado en pantalla del proyector solo acepta dígitos. Compruébalo con `npx wrangler secret list` (lista nombres,
+nunca valores).
+
+`wrangler.jsonc` no declara `vars.HOST_PASSCODE` a propósito: un `vars` con el mismo nombre **sobrescribe el
+secreto** en cada despliegue (wrangler lo avisa: *"Configuration values (...) conflict with existing remote
+secrets"*). Y al revés: si despliegas sin secreto, el Durable Object no tiene clave y rechaza toda orden del
+proyector → **el secreto va primero**. Para desarrollo local (`npm run worker:dev`) copia `.dev.vars.example` a
+`.dev.vars` (está en `.gitignore`).
 
 - Proyector: `https://<tu-url>/host/` (misma clave maestra que subiste como secreto).
 - Mando: `https://<tu-url>/` desde el móvil, en cualquier red.
