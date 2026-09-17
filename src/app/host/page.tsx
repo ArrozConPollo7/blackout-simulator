@@ -42,7 +42,7 @@ function HostConsole({
   onAuthFailed,
 }: {
   passcode: string;
-  onAuthFailed: () => void;
+  onAuthFailed: (reason?: string | null) => void;
 }) {
   const [screenShake, setScreenShake] = useState(false);
   const [violentShake, setViolentShake] = useState(false);
@@ -63,7 +63,7 @@ function HostConsole({
 
   useEffect(() => {
     if (errorMsg && /CLAVE MAESTRA INVÁLIDA/.test(errorMsg)) {
-      onAuthFailed();
+      onAuthFailed(errorMsg);
     }
   }, [errorMsg, onAuthFailed]);
 

@@ -235,7 +235,17 @@ export class RoomDurableObject {
       // ---------------------------------------------------------- anfitrión
       case "HOST_OPEN_ROOM": {
         const passcode = String(this.env.HOST_PASSCODE || "");
-        if (!passcode || String(msg.passcode || "") !== passcode) {
+        if (!passcode) {
+          // Diagnóstico explícito: sin secreto configurado NADIE puede operar el
+          // proyector, y el mensaje genérico no lo dejaría ver.
+          this.send(ws, {
+            type: "ERROR",
+            message:
+              "CLAVE MAESTRA INVÁLIDA // ESTE WORKER NO TIENE HOST_PASSCODE CONFIGURADO: EJECUTA `npx wrangler secret put HOST_PASSCODE` Y VUELVE A DESPLEGAR",
+          });
+          return;
+        }
+        if (String(msg.passcode || "") !== passcode) {
           this.send(ws, { type: "ERROR", message: "CLAVE MAESTRA INVÁLIDA // ACCESO DENEGADO" });
           return;
         }

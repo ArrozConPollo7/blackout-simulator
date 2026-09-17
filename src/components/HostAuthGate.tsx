@@ -10,7 +10,7 @@ interface HostAuthGateProps {
    * para invalidarla. La verificación real ocurre en el servidor (la sala solo
    * obedece órdenes de un socket autenticado con `HOST_PASSCODE`).
    */
-  children: (session: { passcode: string; invalidate: () => void }) => ReactNode;
+  children: (session: { passcode: string; invalidate: (reason?: string | null) => void }) => ReactNode;
 }
 
 const STORAGE_KEY = "host_passcode";
@@ -27,13 +27,18 @@ export function HostAuthGate({ children }: HostAuthGateProps) {
     }
   }, []);
 
-  const invalidate = () => {
+  /**
+   * El servidor es quien valida la clave: cuando la rechaza, `reason` trae su
+   * mensaje exacto (p. ej. "el Worker no tiene HOST_PASSCODE configurado").
+   * Si no llega motivo, se usa el genérico.
+   */
+  const invalidate = (reason?: string | null) => {
     if (typeof window !== "undefined") {
       sessionStorage.removeItem(STORAGE_KEY);
     }
     setPasscode(null);
     setPasscodeInput("");
-    setErrorMsg("CLAVE RECHAZADA POR LA CONSOLA MAESTRA // INTENTA DE NUEVO");
+    setErrorMsg((reason || "").trim() || "CLAVE RECHAZADA POR LA CONSOLA MAESTRA // INTENTA DE NUEVO");
   };
 
   const handleKeyPress = (char: string) => {
