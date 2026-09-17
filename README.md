@@ -182,6 +182,36 @@ tanto desde el mando de la mesa como desde el override del anfitrión (el SCRAM 
 
 ---
 
+## Rendimiento (portátiles que se ahogan)
+
+El efecto CRT es lo que hace que la página se sienta retro, y también lo que más le cuesta al
+navegador. Medido con el proceso gráfico del navegador en este repo (rasterización por software, así
+que la cifra equivale al trabajo que en un PC real recae en la GPU):
+
+| Pantalla | Efectos completos | Modo ligero |
+|---|---|---|
+| Mando de mesa (`/`) | 65,7 % de un núcleo | **0,0 %** |
+| Vista de red (`/grid`) | 111,8 % (más de un núcleo) | **4,9 %** |
+| Proyector (`/host`) con ronda viva | 97,3 % (28 animaciones a la vez) | **0,3 %** |
+
+La causa no es una animación concreta: **basta una animación viva para que el compositor produzca
+frames sin parar**, y en cada frame tiene que recomponer más de un millón de píxeles con sombras de
+texto y capas encima. Con la pantalla quieta el consumo cae a ~0,1 %. De ahí el **modo ligero**:
+
+- Apaga el haz de electrones, la viñeta de barril, el parpadeo y los latidos decorativos, y baja el
+  osciloscopio de 30 a 12 fps y el refresco del reloj. La lectura del tablero no cambia.
+- Se activa solo si el equipo es flojo (`prefers-reduced-motion`, 4 núcleos o menos, 4 GB o menos, o
+  menos de 40 fps medidos en los primeros frames).
+- Se fuerza con `?lite=1` (o `?full=1` para lo contrario) y con el interruptor de **`/crt`**; la
+  decisión se guarda en el navegador.
+
+Además, los efectos completos son ahora mucho más baratos que antes: la viñeta es un degradado en
+lugar de dos `box-shadow` de 80/160 px, el parpadeo es un destello puntual en vez de animar la
+opacidad de toda la página, el haz y las scanlines viven en sus propias capas y el osciloscopio ya no
+usa `shadowBlur`.
+
+---
+
 ## Arquitectura
 
 Dos runtimes, **un solo motor**:

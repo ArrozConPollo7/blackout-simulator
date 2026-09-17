@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Header } from "@/components/Header";
 import { CrtContainer } from "@/components/CrtContainer";
+import { useCrtSettings } from "@/lib/crtContext";
 import { useSocket } from "@/lib/useSocket";
 import { DISTRICTS, MAX_BLACKOUTS, SECTOR_SPECS, SECTOR_ORDER, versionLabel } from "@/lib/types";
 
@@ -20,6 +21,7 @@ export default function GridOverviewPage() {
   });
   const [freq, setFreq] = useState(60.0);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const { modoLigero } = useCrtSettings();
 
   const teams = useMemo(() => Object.values(roomState?.teams || {}), [roomState?.teams]);
   const demand = roomState?.demand;
@@ -32,12 +34,15 @@ export default function GridOverviewPage() {
 
   useEffect(() => {
     const interval = setInterval(() => {
+      // En modo ligero la aguja se mueve una vez por segundo y ni eso si la
+      // pestaña no está a la vista: cada tick re-renderiza la página entera.
+      if (document.visibilityState !== "visible") return;
       const baseFreq = overload ? 58.8 : 60.0;
       const jitter = (Math.random() - 0.5) * (overload ? 0.4 : 0.06);
       setFreq(Number((baseFreq + jitter).toFixed(2)));
-    }, 600);
+    }, modoLigero ? 1200 : 600);
     return () => clearInterval(interval);
-  }, [overload]);
+  }, [overload, modoLigero]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -45,13 +50,22 @@ export default function GridOverviewPage() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    let frameId: number;
+    let frameId = 0;
     let phase = 0;
+    let ultimoPintado = 0;
+    // Ruido precalculado: antes se llamaba a Math.random() por cada píxel y por
+    // cada frame (1.000 números aleatorios × 60 fps). Ahora se reutiliza una
+    // tabla fija, que además hace que la traza no vibre de forma epiléptica.
+    const RUIDO = new Float32Array(256);
+    for (let i = 0; i < RUIDO.length; i += 1) RUIDO[i] = Math.random() - 0.5;
 
-    const render = () => {
+    /** 30 fps bastan para un osciloscopio: la mitad de trabajo, misma lectura. */
+    const INTERVALO_MS = modoLigero ? 1000 / 12 : 1000 / 30;
+
+    const pintar = () => {
       const w = canvas.width;
       const h = canvas.height;
-      ctx.fillStyle = "rgba(13, 13, 23, 0.25)";
+      ctx.fillStyle = "rgba(13, 13, 23, 0.35)";
       ctx.fillRect(0, 0, w, h);
 
       ctx.strokeStyle = "rgba(60, 74, 60, 0.4)";
@@ -61,30 +75,49 @@ export default function GridOverviewPage() {
       ctx.lineTo(w, h / 2);
       ctx.stroke();
 
-      ctx.beginPath();
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = overload ? "#ff1b3a" : "#2bf075";
-      ctx.shadowColor = overload ? "#ff1b3a" : "#2bf075";
-      ctx.shadowBlur = 8;
-
+      const color = overload ? "#ff1b3a" : "#2bf075";
       const waveFreq = overload ? 0.03 : 0.05;
       const amp = overload ? h * 0.42 : h * 0.35;
+      const ruido = overload ? 8 : 1.5;
 
-      for (let x = 0; x < w; x += 1) {
-        const y = h / 2 + Math.sin(x * waveFreq + phase) * amp + (Math.random() - 0.5) * (overload ? 8 : 1.5);
-        if (x === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-      ctx.shadowBlur = 0;
+      const trazar = () => {
+        ctx.beginPath();
+        // Paso de 2 px (y de 4 en modo ligero): la mitad de puntos por trazo.
+        const paso = modoLigero ? 4 : 2;
+        for (let x = 0; x <= w; x += paso) {
+          const y =
+            h / 2 + Math.sin(x * waveFreq + phase) * amp + RUIDO[(x + (frameId % 64)) % RUIDO.length] * ruido;
+          if (x === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      };
+
+      // Sin shadowBlur: el desenfoque por trazo es lo que más costaba del canvas.
+      // Dos pasadas (halo translúcido + trazo nítido) dan el mismo fósforo.
+      ctx.lineWidth = 5;
+      ctx.globalAlpha = 0.22;
+      ctx.strokeStyle = color;
+      trazar();
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 2;
+      trazar();
 
       phase += overload ? 0.18 : 0.12;
-      frameId = requestAnimationFrame(render);
     };
 
-    render();
+    const render = (ahora: number) => {
+      frameId = requestAnimationFrame(render);
+      if (document.visibilityState !== "visible") return;
+      if (ahora - ultimoPintado < INTERVALO_MS) return;
+      ultimoPintado = ahora;
+      pintar();
+    };
+
+    pintar();
+    frameId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(frameId);
-  }, [overload]);
+  }, [overload, modoLigero]);
 
   // Posiciones radiales de los distritos presentes en la malla
   const nodes = useMemo(() => {

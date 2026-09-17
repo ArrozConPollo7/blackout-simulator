@@ -1,9 +1,10 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Header } from "@/components/Header";
 import { CrtContainer } from "@/components/CrtContainer";
 import { useCrtSettings } from "@/lib/crtContext";
+import { suscribirFps } from "@/lib/fpsProbe";
 import { sound } from "@/lib/audio";
 
 export default function CrtCalibrationPage() {
@@ -18,7 +19,17 @@ export default function CrtCalibrationPage() {
     triggerDegauss,
     updateSetting,
     resetDefaults,
+    modoLigero,
+    autoLigero,
   } = useCrtSettings();
+
+  /**
+   * La sonda de fps vive en `lib/fpsProbe` (a nivel de módulo, sobrevive a
+   * re-montajes). Aquí solo se muestra el resultado, que llega aunque el árbol de
+   * React se reconstruya al hidratar con ajustes guardados.
+   */
+  const [fpsMedidos, setFpsLocal] = useState<number | null>(null);
+  useEffect(() => suscribirFps(setFpsLocal), []);
 
   const handleDegauss = () => {
     triggerDegauss();
@@ -85,6 +96,51 @@ export default function CrtCalibrationPage() {
           </button>
         </div>
 
+        {/* MODO LIGERO: para portátiles que se ahogan con el proyector */}
+        <div
+          className={`border-2 rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between gap-4 ${
+            modoLigero
+              ? "bg-primary/5 border-primary/60"
+              : "bg-surface-container-low border-surface-container-high"
+          }`}
+        >
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-primary text-[22px]">battery_saver</span>
+              <h3 className="font-headline text-lg font-bold uppercase tracking-wide text-primary phosphor-glow-green">
+                MODO LIGERO
+              </h3>
+            </div>
+            <p className="font-data text-xs text-on-surface-variant max-w-xl">
+              Apaga el haz de electrones, la viñeta de barril, el parpadeo y la animación del
+              osciloscopio, y baja el refresco del reloj: la CPU y la GPU del portátil dejan de
+              dispararse. El tablero, las reglas y los números se ven exactamente igual.
+            </p>
+            <p className="font-data text-[11px] text-outline">
+              {fpsMedidos !== null
+                ? `SONDA DE RENDIMIENTO: ${fpsMedidos} fps en este equipo (por debajo de 40 se activa solo).`
+                : "SONDA DE RENDIMIENTO: aún sin medición; el modo ligero lo puedes forzar con este interruptor."}
+              {modoLigero && autoLigero ? " · ACTIVADO AUTOMÁTICAMENTE EN ESTE EQUIPO." : ""}
+              {!modoLigero && autoLigero ? " · ESTE EQUIPO NO LLEGA A 40 FPS: SE ACTIVA SOLO." : ""}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              sound.playRelayClick(!modoLigero);
+              updateSetting("modoLigero", !modoLigero);
+            }}
+            className={`w-full sm:w-auto px-6 py-4 rounded-xl font-headline text-base uppercase tracking-wider font-bold transition-all cursor-pointer select-none shrink-0 ${
+              modoLigero
+                ? "bg-primary text-black shadow-[0_0_18px_rgba(43,240,117,0.45)]"
+                : "bg-surface-container-high text-outline border border-outline-variant"
+            }`}
+          >
+            {modoLigero ? "MODO LIGERO ACTIVADO" : "ACTIVAR MODO LIGERO"}
+          </button>
+        </div>
+
         {/* CONTROLES DE CALIBRACIÓN DE PANTALLA */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {/* Curvatura del Tubo */}
@@ -120,7 +176,8 @@ export default function CrtCalibrationPage() {
                 MICRO-PARPADEO DEL HAZ (FLICKER)
               </span>
               <p className="font-data text-[11px] text-on-surface-variant mt-0.5">
-                Frecuencia de refresco a 60Hz con sutil fluctuación luminosa de cátodo.
+                Fogonazo breve cada 6–15 s, como un cátodo que pierde la señal un instante
+                (antes era un parpadeo continuo que costaba una recomposición de pantalla por frame).
               </p>
             </div>
 
@@ -135,7 +192,7 @@ export default function CrtCalibrationPage() {
                   : "bg-surface-container-high text-outline border-outline-variant"
               }`}
             >
-              {flicker ? "PARPADEO ACTIVADO (60Hz)" : "REFRESCO CONSTANTE"}
+              {flicker ? "PARPADEO DISCRETO ACTIVADO" : "SIN PARPADEO"}
             </button>
           </div>
 

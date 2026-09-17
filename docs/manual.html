@@ -121,7 +121,7 @@ li { margin:2px 0; }
 <td><strong>Calibración CRT</strong></td>
 <td>—</td>
 <td><code>/crt</code></td>
-<td>Ajustes visuales del efecto retro (scanlines, curvatura, fósforo)</td>
+<td>Ajustes visuales del efecto retro (scanlines, curvatura, fósforo) y el interruptor de <strong>MODO LIGERO</strong> para portátiles que se ahogan</td>
 </tr>
 </tbody></table>
 <ul>
@@ -1018,6 +1018,13 @@ node scripts/reference-game.js --scan 300   # balance: ¿tiene salida cada semil
 <li>[ ] Guardar la semilla y la lista de incidentes del acta final: la próxima clase puede repetir exactamente la</li>
 </ul>
 <p>      misma partida y comparar decisiones.</p>
+<p><strong>Si el portátil del proyector sufre</strong></p>
+<ul>
+<li>[ ] Abrir el proyector con <code>MODO LIGERO</code> activado (interruptor en <code>/crt</code>, o <code>?lite=1</code> en la URL) y dejar la</li>
+</ul>
+<p>      decisión guardada: el efecto CRT decorativo se apaga y el consumo del navegador cae a prácticamente cero.</p>
+<p>      Se activa solo en equipos flojos (menos de 40 fps, 4 núcleos o 4 GB), y en su sistema operativo si tiene</p>
+<p>      activado &quot;reducir movimiento&quot;.</p>
 <hr/>
 <h2 id="16-problemas-conocidos-y-plan-b">16. Problemas conocidos y plan B</h2>
 <table><thead><tr>
@@ -1069,6 +1076,16 @@ node scripts/reference-game.js --scan 300   # balance: ¿tiene salida cada semil
 <td>La partida sale rara y quieres auditar</td>
 <td>—</td>
 <td>Semilla en pantalla + <code>node scripts/reference-game.js --seed N</code> reproduce el guion</td>
+</tr>
+<tr>
+<td><strong>El portátil se calienta y el ventilador no para</strong> (CPU/GPU altos al abrir la web)</td>
+<td>Los efectos CRT: basta una animación viva (el haz, los puntos que laten) para que el navegador recomponga la pantalla entera 60 veces por segundo</td>
+<td><strong>MODO LIGERO</strong> en <code>/crt</code> (o abrir con <code>?lite=1</code>). Medido: el proyector pasa de ~97 % de un núcleo a <strong>0,3 %</strong> y el mando de 66 % a <strong>0 %</strong>, sin perder legibilidad</td>
+</tr>
+<tr>
+<td>El portátil va lento solo al arrancar la página</td>
+<td>Servidor de desarrollo compilando a demanda</td>
+<td>Para clase usa <code>npm run start</code> (producción) o la URL pública, no <code>npm run dev</code></td>
 </tr>
 </tbody></table>
 <p><strong>Plan B mínimo</strong> si la tecnología falla en plena clase: el proyector muestra <code>/rules</code> (tabla de sectores, crisis y</p>

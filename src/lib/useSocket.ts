@@ -174,7 +174,13 @@ export function useSocket(options: UseSocketOptions = {}) {
   useEffect(() => {
     if (!deadlineTs) return;
     setNowTs(Date.now());
-    const id = setInterval(() => setNowTs(Date.now()), 250);
+    // La cuenta atrás solo repinta lo necesario: 250 ms durante la fase con
+    // reloj, y nada mientras la pestaña no está a la vista (el proyector suele
+    // quedarse en segundo plano mientras el salón habla).
+    const id = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      setNowTs(Date.now());
+    }, 250);
     return () => clearInterval(id);
   }, [deadlineTs]);
 

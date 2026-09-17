@@ -33,7 +33,10 @@
   }
 }
 
-/* CRT Scanlines Overlay */
+/* CRT Scanlines Overlay
+ * `translateZ(0)` la promueve a su propia capa: se rasteriza una vez y el
+ * compositor la reutiliza (antes, cualquier animación de la página la obligaba
+ * a repintar el degradado a 60 fps). */
 .crt-scanlines {
   background: linear-gradient(
     rgba(18, 18, 29, 0) 50%,
@@ -41,12 +44,32 @@
   );
   background-size: 100% 3px;
   pointer-events: none;
+  transform: translateZ(0);
+  will-change: transform;
 }
 
-/* CRT Barrel Curvature & Vignette */
+/* CRT Barrel Curvature & Vignette
+ * Antes eran dos `box-shadow: inset` con 80 y 160 px de difusión sobre todo el
+ * viewport: un desenfoque enorme que se re-rasterizaba en cada frame. Dos
+ * degradados radiales dan la misma viñeta curvada y se cachean al instante. */
 .crt-vignette {
-  box-shadow: inset 0 0 80px rgba(0, 0, 0, 0.85), inset 0 0 160px rgba(4, 4, 9, 0.95);
+  background:
+    radial-gradient(
+      125% 105% at 50% 50%,
+      rgba(0, 0, 0, 0) 42%,
+      rgba(0, 0, 0, 0.45) 76%,
+      rgba(0, 0, 0, 0.9) 100%
+    ),
+    linear-gradient(
+      to bottom,
+      rgba(4, 4, 9, 0.55) 0%,
+      rgba(4, 4, 9, 0) 14%,
+      rgba(4, 4, 9, 0) 86%,
+      rgba(4, 4, 9, 0.55) 100%
+    );
   pointer-events: none;
+  transform: translateZ(0);
+  will-change: transform;
 }
 
 /* Moving Electron Beam Scan */
@@ -59,11 +82,14 @@
   background: linear-gradient(to bottom, rgba(43, 240, 117, 0), rgba(43, 240, 117, 0.15), rgba(43, 240, 117, 0));
   animation: scanbeam 8s linear infinite;
   pointer-events: none;
+  /* Capa propia: el haz se mueve con transform y no arrastra al resto. */
+  transform: translate3d(0, -100%, 0);
+  will-change: transform;
 }
 
 @keyframes scanbeam {
-  0% { transform: translateY(-100%); }
-  100% { transform: translateY(100vh); }
+  0% { transform: translate3d(0, -100%, 0); }
+  100% { transform: translate3d(0, 100vh, 0); }
 }
 
 /* Phosphor Glows */
@@ -83,30 +109,33 @@
   text-shadow: 0 0 4px #ffb000, 0 0 12px rgba(255, 176, 0, 0.7);
 }
 
-/* Screen Snap & Pop Shakes */
+/* Screen Snap & Pop Shakes
+ * Solo transform: se quedan en el compositor, sin repintar el texto. */
 .shake-snap {
   animation: snapAnim 0.15s ease-out;
+  will-change: transform;
 }
 
 @keyframes snapAnim {
-  0% { transform: translate(0, 0) scale(1); }
-  25% { transform: translate(-3px, 2px) scale(0.998); }
-  50% { transform: translate(2px, -2px) scale(1.002); }
-  75% { transform: translate(-1px, 1px) scale(1); }
-  100% { transform: translate(0, 0) scale(1); }
+  0% { transform: translate3d(0, 0, 0) scale(1); }
+  25% { transform: translate3d(-3px, 2px, 0) scale(0.998); }
+  50% { transform: translate3d(2px, -2px, 0) scale(1.002); }
+  75% { transform: translate3d(-1px, 1px, 0) scale(1); }
+  100% { transform: translate3d(0, 0, 0) scale(1); }
 }
 
 .shake-violent {
   animation: violentAnim 0.25s infinite;
+  will-change: transform;
 }
 
 @keyframes violentAnim {
-  0% { transform: translate(0, 0) rotate(0deg); }
-  20% { transform: translate(-4px, 4px) rotate(-0.3deg); }
-  40% { transform: translate(4px, -3px) rotate(0.4deg); }
-  60% { transform: translate(-3px, -4px) rotate(-0.2deg); }
-  80% { transform: translate(3px, 2px) rotate(0.3deg); }
-  100% { transform: translate(0, 0) rotate(0deg); }
+  0% { transform: translate3d(0, 0, 0) rotate(0deg); }
+  20% { transform: translate3d(-4px, 4px, 0) rotate(-0.3deg); }
+  40% { transform: translate3d(4px, -3px, 0) rotate(0.4deg); }
+  60% { transform: translate3d(-3px, -4px, 0) rotate(-0.2deg); }
+  80% { transform: translate3d(3px, 2px, 0) rotate(0.3deg); }
+  100% { transform: translate3d(0, 0, 0) rotate(0deg); }
 }
 
 /* Chromatic Aberration Overdrive */
@@ -118,6 +147,98 @@
 .bg-dither {
   background-image: radial-gradient(rgba(43, 240, 117, 0.15) 1px, transparent 0);
   background-size: 8px 8px;
+}
+
+/* Parpadeo CRT discreto.
+ * El parpadeo continuo animaba la `opacity` del contenedor de TODA la página:
+ * el compositor tenía que recomponer (y en software re-rasterizar) más de un
+ * millón de píxeles 60 veces por segundo, con los text-shadow y las scanlines
+ * encima. Ahora es una capa propia casi vacía que se enciende un instante cada
+ * varios segundos: el mismo efecto de fósforo inestable a coste cero. */
+.crt-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 41;
+  pointer-events: none;
+  background: #0b0b16;
+  opacity: 0;
+  transition: opacity 110ms linear;
+  transform: translateZ(0);
+  will-change: opacity;
+}
+.crt-flash.on {
+  opacity: 0.32;
+}
+
+/* Instantánea de desmagnetización (DEGAUSS).
+ * Sustituye al `filter: blur() hue-rotate() saturate()` sobre toda la página,
+ * que obligaba a renderizar el viewport entero fuera de pantalla en cada frame. */
+.crt-degauss {
+  position: fixed;
+  inset: 0;
+  z-index: 42;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    60% 60% at 50% 50%,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(0, 245, 255, 0.16) 45%,
+    rgba(255, 27, 58, 0.14) 100%
+  );
+  transform: translateZ(0);
+  mix-blend-mode: screen;
+}
+.crt-degauss.on {
+  animation: degaussPulse 1.2s ease-out;
+}
+
+@keyframes degaussPulse {
+  0% { opacity: 0; }
+  12% { opacity: 0.85; }
+  30% { opacity: 0.35; }
+  100% { opacity: 0; }
+}
+
+/* MODO LIGERO — para portátiles que sufren con el proyector.
+ * Medido en el navegador: con UNA sola animación viva (el haz, un punto que
+ * late) el compositor no para de producir frames y la página se come ~50 % de un
+ * núcleo; con todas paradas baja a ~0,1 %. Por eso en modo ligero se apagan
+ * también los latidos decorativos, no solo el haz: el objetivo es que la pantalla
+ * quede quieta entre cambios de estado.
+ * Se activa desde /crt, con ?lite=1 o solo, cuando la sonda detecta un equipo
+ * flojo (menos de 40 fps, 4 núcleos o menos, o `prefers-reduced-motion`). */
+html[data-modo="ligero"] .crt-beam,
+html[data-modo="ligero"] .crt-vignette {
+  display: none;
+}
+html[data-modo="ligero"] .crt-scanlines {
+  opacity: 0.22;
+}
+html[data-modo="ligero"] .animate-pulse,
+html[data-modo="ligero"] .animate-ping,
+html[data-modo="ligero"] .animate-spin,
+html[data-modo="ligero"] .animate-flicker {
+  animation: none;
+}
+/* El temblor del apagón se mantiene (es la señal de que algo va mal), pero como
+ * golpe único: una animación infinita volvería a encender el compositor para siempre. */
+html[data-modo="ligero"] .shake-violent {
+  animation: violentAnim 0.45s ease-out 1;
+}
+html[data-modo="ligero"] .crt-scanlines,
+html[data-modo="ligero"] .crt-flash {
+  will-change: auto;
+}
+
+/* Quien pide menos movimiento en su sistema no debería recibir shakes ni haz. */
+@media (prefers-reduced-motion: reduce) {
+  .crt-beam {
+    display: none;
+  }
+  .shake-snap,
+  .shake-violent {
+    animation: none;
+  }
 }
 
 /*

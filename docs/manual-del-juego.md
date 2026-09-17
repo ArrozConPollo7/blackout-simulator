@@ -66,7 +66,7 @@ en Bienestar ni en el marcador.
 | **Mesa / distrito** | Celular de cada mesa | `/` (o `/team`) | Enciende y apaga los tres sectores de su distrito; lee el tablero espejo |
 | **Vista de red** | Pantalla secundaria | `/grid` | Topología, osciloscopio y reserva girante (apoyo visual opcional) |
 | **Manual** | Cualquiera | `/rules` | Reglas resumidas, tabla de sectores, pool de crisis e incidentes |
-| **Calibración CRT** | — | `/crt` | Ajustes visuales del efecto retro (scanlines, curvatura, fósforo) |
+| **Calibración CRT** | — | `/crt` | Ajustes visuales del efecto retro (scanlines, curvatura, fósforo) y el interruptor de **MODO LIGERO** para portátiles que se ahogan |
 
 - **Mesas por partida:** 3 a 6 distritos (4 recomendado). Cada distrito puede existir sin teléfono: sigue
   consumiendo y el anfitrión lo opera a mano desde el proyector. **Una mesa sin teléfono no deja de consumir.**
@@ -607,6 +607,13 @@ aritmética del documento sin azar; los sorteos se prueban aparte con semillas f
 - [ ] Guardar la semilla y la lista de incidentes del acta final: la próxima clase puede repetir exactamente la
       misma partida y comparar decisiones.
 
+**Si el portátil del proyector sufre**
+
+- [ ] Abrir el proyector con `MODO LIGERO` activado (interruptor en `/crt`, o `?lite=1` en la URL) y dejar la
+      decisión guardada: el efecto CRT decorativo se apaga y el consumo del navegador cae a prácticamente cero.
+      Se activa solo en equipos flojos (menos de 40 fps, 4 núcleos o 4 GB), y en su sistema operativo si tiene
+      activado "reducir movimiento".
+
 ---
 
 ## 16. Problemas conocidos y plan B
@@ -622,6 +629,8 @@ aritmética del documento sin azar; los sorteos se prueban aparte con semillas f
 | Una mesa se queda sin batería a mitad | — | Reconecta con el mismo distrito (la sesión se restaura) o el anfitrión opera ese distrito a mano |
 | Quieres la aritmética del documento sin azar | — | `INCIDENTS=off` (Node) o `--var INCIDENTS:off` (Worker) |
 | La partida sale rara y quieres auditar | — | Semilla en pantalla + `node scripts/reference-game.js --seed N` reproduce el guion |
+| **El portátil se calienta y el ventilador no para** (CPU/GPU altos al abrir la web) | Los efectos CRT: basta una animación viva (el haz, los puntos que laten) para que el navegador recomponga la pantalla entera 60 veces por segundo | **MODO LIGERO** en `/crt` (o abrir con `?lite=1`). Medido: el proyector pasa de ~97 % de un núcleo a **0,3 %** y el mando de 66 % a **0 %**, sin perder legibilidad |
+| El portátil va lento solo al arrancar la página | Servidor de desarrollo compilando a demanda | Para clase usa `npm run start` (producción) o la URL pública, no `npm run dev` |
 
 **Plan B mínimo** si la tecnología falla en plena clase: el proyector muestra `/rules` (tabla de sectores, crisis y
 castigos) y la clase juega con las cuentas en la pizarra usando exactamente los mismos números de este manual.
