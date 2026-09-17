@@ -1,6 +1,6 @@
 {
   "name": "blackout-simulator",
-  "version": "5.1.0",
+  "version": "5.2.0",
   "private": true,
   "description": "BLACKOUT: GRID COLLAPSE — simulador multijugador de crisis eléctrica para aula (proyector + mandos por mesa, con incidentes aleatorios por ronda)",
   "engines": {

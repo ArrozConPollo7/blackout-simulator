@@ -161,10 +161,16 @@ Cada distrito: 1.000 pts de Bienestar (0–1.200), $10.000 de tesorería y tres 
 
 | Sector | MW | Gas m³ | Encendido | Apagado | Si se apaga |
 |---|---|---|---|---|---|
-| Zona Industrial | 180 | 400 | +$3.000 | -$1.000 | sin daño a Bienestar |
-| Zona Residencial | 120 | 250 | -$500 de red | -$500 de red | -150 Bienestar |
-| Servicios Críticos | 60 | 100 | -$300 de red | -$300 de red | -450 Bienestar |
+| Zona Industrial | 150 | 320 | +$3.000 | -$1.000 | -60 Bienestar (paro local) |
+| Zona Residencial | 130 | 280 | -$500 de red | -$500 de red | -150 Bienestar |
+| Servicios Críticos | 80 | 150 | -$300 de red | -$300 de red | -450 Bienestar |
 | **Total** | **360** | **750** | **+$2.200 netos** | — | — |
+
+Con el **rebalanceo 5.2** ninguna palanca resuelve la crisis sola: la brecha de demanda entre sectores se acortó
+(150/130/80 MW y 320/280/150 m³, mismo total por distrito) y apagar la industria cuesta Bienestar. En el apagón
+el golpe base baja a **-150**, y el distrito que **mantuvo la industria encendida** recibe **-250 de Bienestar**
+y **-$1.500 de multa**; si sostuvo el residencial, **-50 más**. El bono de **+100** por red estable es solo para
+quien **cedió al menos un sector**: el que se quedó al 100% cobra **+10** de cortesía.
 
 La capacidad regional de cada ronda es igual a la demanda base del panel (360 MW / 750 m³ por distrito): **la red
 arranca sin margen**, y la crisis aplica sus multiplicadores — gas -20% (ronda 1), eléctrica -35% (ronda 2),
@@ -225,8 +231,8 @@ Servidor → cliente: `SYNC_STATE`, `JOIN_SUCCESS`, `JOIN_REJECTED`, `ROOM_NOT_F
 ## Pruebas
 
 ```bash
-npm test              # motor + partida completa contra el servidor Node   (35 pruebas)
-npm run test:engine   # solo la aritmética y el sorteo de incidentes      (24 pruebas)
+npm test              # motor + partida completa contra el servidor Node   (43 pruebas)
+npm run test:engine   # solo la aritmética y el sorteo de incidentes      (31 pruebas)
 npm run test:worker   # partida completa contra el Worker real            (9 pruebas, necesita build:static)
 npm run typecheck     # tsc --noEmit
 curl localhost:3006/healthz   # salas activas, fase, ronda, apagones, semilla, incidentes y bloqueos

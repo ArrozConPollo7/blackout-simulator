@@ -8,17 +8,22 @@
  * suite de pruebas con `node --test`. Toda la aritmética del juego vive aquí,
  * sin I/O, para poder verificarla de forma aislada.
  *
- * Reglas según "Juego - NFI.md" (Obsidian):
+ * Reglas según "Juego - NFI.md" (Obsidian), con el rebalanceo 5.2:
  *  - Cada distrito arranca con 1.000 pts de Bienestar (0..1.200) y $10.000.
- *  - Sectores: industrial (180 MW / 400 m3), residencial (120 MW / 250 m3) y
- *    servicios críticos (60 MW / 100 m3)  =>  360 MW / 750 m3 por distrito.
+ *  - Sectores (rebalanceados para que ninguna palanca resuelva la crisis sola):
+ *    industrial (150 MW / 320 m3), residencial (130 MW / 280 m3) y servicios
+ *    críticos (80 MW / 150 m3)  =>  360 MW / 750 m3 por distrito, igual que antes.
  *  - La red regional se resuelve al expirar el cronómetro: si la demanda total
  *    de MW O la de gas supera la capacidad de la ronda => BLACKOUT colectivo.
+ *  - El apagón ya no reparte el daño por igual: el golpe base es -150 y el
+ *    distrito que sostuvo la industria paga -250 más una multa de $1.500.
+ *  - El bono de red estable (+100) es para quien cedió carga; el que se quedó
+ *    al 100% solo cobra +10 de cortesía.
  *  - 2 blackouts => fallo regional irreversible, sin ganadores.
  *  - PEF = Bienestar final + (Tesorería final / 100).
  */
 
-const VERSION = "5.1";
+const VERSION = "5.2";
 
 /** @typedef {"industry" | "residential" | "critical"} SectorKey */
 /** @typedef {"LOBBY" | "PLANNING" | "CRISIS_ANNOUNCE" | "CRISIS_ACTIVE" | "RESOLUTION" | "GAME_OVER"} GamePhase */
@@ -38,12 +43,15 @@ const SECTOR_SPECS = {
     short: "IND",
     sublabel: "FUNDICIONES, TINAJAS Y LÍNEA DE ENSAMBLE",
     tag: "BUS 01 // CARGA PESADA",
-    demandMW: 180,
-    demandGas: 400,
+    // Rebalanceo 5.2: la industria cargaba 180/400 (mitad del distrito) y apagarla
+    // sola resolvía casi cualquier crisis. Ahora carga menos y cuesta bienestar
+    // apagarla (paro local), así que el recorte se reparte.
+    demandMW: 150,
+    demandGas: 320,
     revenueOn: 3000,
     revenueOff: -1000,
     gridFee: 0,
-    welfareOff: 0,
+    welfareOff: -60,
     icon: "factory",
     accent: "green",
   },
@@ -53,8 +61,8 @@ const SECTOR_SPECS = {
     short: "RES",
     sublabel: "ARCOLOGÍAS, CALEFACCIÓN Y AGUA CALIENTE",
     tag: "BUS 02 // CARGA CIVIL",
-    demandMW: 120,
-    demandGas: 250,
+    demandMW: 130,
+    demandGas: 280,
     revenueOn: 0,
     revenueOff: 0,
     gridFee: -500,
@@ -68,8 +76,8 @@ const SECTOR_SPECS = {
     short: "CRIT",
     sublabel: "SALAS DE TRAUMA, OXÍGENO Y BOMBEO",
     tag: "BUS 03 // VIDA CRÍTICA",
-    demandMW: 60,
-    demandGas: 100,
+    demandMW: 80,
+    demandGas: 150,
     revenueOn: 0,
     revenueOff: 0,
     gridFee: -300,
@@ -89,8 +97,22 @@ const INITIAL_WELFARE = 1000;
 const MAX_WELFARE = 1200;
 const MIN_WELFARE = 0;
 const INITIAL_BUDGET = 10000;
-const BLACKOUT_WELFARE_HIT = -300;
+/**
+ * Castigos del apagón colectivo (5.2). El golpe base baja de -300 a -150 y el
+ * peso se traslada al que se aprovechó: mantener la industria encendida mientras
+ * la red se cae es lo que más duele.
+ */
+const BLACKOUT_WELFARE_HIT = -150;
+/** Malus individual por sobreconsumo: industria encendida durante el colapso. */
+const BLACKOUT_HOG_MALUS = -250;
+/** Multa regulatoria al mismo distrito (dinero, no bienestar). */
+const BLACKOUT_HOG_FINE = -1500;
+/** Malus adicional por sostener la carga residencial durante el colapso. */
+const BLACKOUT_RESIDENTIAL_MALUS = -50;
+/** Bono de red estable para quien colaboró apagando al menos un sector. */
 const STABLE_WELFARE_BONUS = 100;
+/** Cortesía (casi nada) para el que no cortó nada y aun así la red aguantó. */
+const STABLE_WELFARE_BONUS_FREE_RIDER = 10;
 const MAX_BLACKOUTS = 2; // 2 apagones => fallo irreversible (doc §7)
 const TOTAL_ROUNDS = 4;
 const ANNOUNCE_SECONDS = 10; // Fase 1: anuncio de crisis (doc §4)
@@ -153,7 +175,7 @@ const CRISIS_PRESETS = [
     name: "ONDA POLAR Y CONGELAMIENTO",
     tagline: "PICO DE DEMANDA CIVIL",
     description:
-      "Pico masivo por frío: la demanda de calefacción y agua caliente duplica el consumo residencial (+120 MW y +250 m3 por distrito). La capacidad regional no aumenta.",
+      "Pico masivo por frío: la demanda de calefacción y agua caliente duplica el consumo residencial (+130 MW y +280 m3 por distrito). La capacidad regional no aumenta.",
     electricMultiplier: 1.0,
     gasMultiplier: 1.0,
     residentialDemandMultiplier: 2,
@@ -996,10 +1018,26 @@ function resolveRound(room) {
       lines.push({ kind: "penalty", text: `APAGÓN MASIVO GENERAL: ${BLACKOUT_WELFARE_HIT} Bienestar` });
 
       if (team.sectors.industry) {
+        // El que no cedió industriа en un colapso se lleva el golpe fuerte.
+        welfareDelta += BLACKOUT_HOG_MALUS;
+        budgetDelta += BLACKOUT_HOG_FINE;
+        lines.push({
+          kind: "penalty",
+          text: `SOBRECONSUMO INDUSTRIAL EN PLENO COLAPSO: ${BLACKOUT_HOG_MALUS} Bienestar`,
+        });
+        lines.push({ kind: "penalty", text: `MULTA REGULATORIA POR SOBRECONSUMO: ${BLACKOUT_HOG_FINE} $` });
         lines.push({ kind: "penalty", text: "INGRESOS INDUSTRIALES ANULADOS: $0 (sin suministro para operar)" });
       } else {
         budgetDelta += spec.industry.revenueOff;
         lines.push({ kind: "penalty", text: `PARO TÉCNICO INDUSTRIAL: ${spec.industry.revenueOff} $` });
+      }
+
+      if (team.sectors.residential) {
+        welfareDelta += BLACKOUT_RESIDENTIAL_MALUS;
+        lines.push({
+          kind: "penalty",
+          text: `CARGA CIVIL SOSTENIDA EN EL COLAPSO: ${BLACKOUT_RESIDENTIAL_MALUS} Bienestar`,
+        });
       }
 
       budgetDelta += spec.residential.gridFee;
@@ -1007,8 +1045,17 @@ function resolveRound(room) {
       budgetDelta += spec.critical.gridFee;
       lines.push({ kind: "penalty", text: `GASTO FIJO DE RED CRÍTICA: ${spec.critical.gridFee} $` });
     } else {
-      welfareDelta += STABLE_WELFARE_BONUS;
-      lines.push({ kind: "bonus", text: `RED ESTABLE: +${STABLE_WELFARE_BONUS} Bienestar` });
+      // El bono de estabilidad es para quien colaboró: apagar al menos un sector.
+      // El que se quedó al 100% esperando que los demás cedieran cobra cortesía.
+      const colaboro = !team.sectors.industry || !team.sectors.residential || !team.sectors.critical;
+      const bonus = colaboro ? STABLE_WELFARE_BONUS : STABLE_WELFARE_BONUS_FREE_RIDER;
+      welfareDelta += bonus;
+      lines.push({
+        kind: bonus > 0 ? "bonus" : "penalty",
+        text: colaboro
+          ? `RED ESTABLE (COLABORÓ CEDIENDO CARGA): +${bonus} Bienestar`
+          : `RED ESTABLE SIN CEDER NADA (TODO AL 100%): +${bonus} Bienestar de cortesía`,
+      });
 
       if (team.sectors.industry) {
         budgetDelta += spec.industry.revenueOn;
@@ -1024,12 +1071,14 @@ function resolveRound(room) {
       lines.push({ kind: "penalty", text: `MANTENIMIENTO DE RED CRÍTICA: ${spec.critical.gridFee} $` });
     }
 
-    // Penalizaciones individuales por tener sectores civiles apagados al resolver.
-    for (const key of ["residential", "critical"]) {
+    // Penalizaciones individuales por los sectores apagados al resolver: los
+    // civiles (residencial y críticos) y la industria, que desde 5.2 también
+    // paga el paro en bienestar (pérdida de actividad y empleo local).
+    for (const key of SECTOR_ORDER) {
       if (!team.sectors[key]) {
         welfareDelta += spec[key].welfareOff;
         lines.push({ kind: "penalty", text: `${spec[key].label} APAGADA: ${spec[key].welfareOff} Bienestar` });
-        team.welfareSacrificed += Math.abs(spec[key].welfareOff);
+        if (spec[key].welfareOff < 0) team.welfareSacrificed += Math.abs(spec[key].welfareOff);
       }
     }
 
@@ -1213,7 +1262,11 @@ module.exports = {
   MIN_WELFARE,
   INITIAL_BUDGET,
   BLACKOUT_WELFARE_HIT,
+  BLACKOUT_HOG_MALUS,
+  BLACKOUT_HOG_FINE,
+  BLACKOUT_RESIDENTIAL_MALUS,
   STABLE_WELFARE_BONUS,
+  STABLE_WELFARE_BONUS_FREE_RIDER,
   MAX_BLACKOUTS,
   TOTAL_ROUNDS,
   ANNOUNCE_SECONDS,

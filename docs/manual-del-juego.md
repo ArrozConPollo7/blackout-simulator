@@ -46,9 +46,15 @@ Dos blackouts acumulados y la partida termina en **fallo regional irreversible, 
 sobrevive las cuatro rondas, gana el distrito con mejor **PEF = Bienestar final + (Tesorería final / 100)**.
 
 El dilema central: mantener la industria encendida paga **+$3.000 por ronda** (y sube el PEF) pero consume
-**180 MW y 400 m³** de los 360 MW y 750 m³ del distrito. Apagarla cuesta **$1.000** pero no daña el Bienestar.
-La zona residencial y los servicios críticos casi no dan dinero, pero apagarlos cuesta **−150** y **−450 pts de
-Bienestar**. O sea: **es rentable parasitar el margen de los demás hasta que la red se cae y pagan todos**.
+**150 MW y 320 m³** de los 360 MW y 750 m³ del distrito. Apagarla cuesta **$1.000** y **−60 pts de Bienestar**
+(paro local y pérdida de actividad). La zona residencial y los servicios críticos casi no dan dinero, pero
+apagarlos cuesta **−150** y **−450 pts de Bienestar**.
+
+Desde el rebalanceo **5.2** el juego castiga al que se aprovecha: en un blackout el golpe base baja a **−150
+para todos**, pero el distrito que **sostuvo la industria encendida** mientras la red se caía carga **−250 más
+y una multa de $1.500**; y el bono de **+100** por red estable es solo para quien **cedió al menos un sector**
+(el que se quedó al 100% cobra **+10 de cortesía**). Parasitar sigue pagando en caja, pero ya no es gratis ni
+en Bienestar ni en el marcador.
 
 ---
 
@@ -80,16 +86,17 @@ por debajo de 0). Las tres cargas y su aritmética exacta:
 
 | Sector | Demanda eléctrica | Demanda de gas | Encendido (por ronda) | Apagado (por ronda) | Si se apaga (Bienestar) |
 |---|---|---|---|---|---|
-| **Zona industrial** (`industry`) | 180 MW | 400 m³ | **+$3.000** de ingresos | **−$1.000** de paro técnico | 0 (sin daño civil) |
-| **Zona residencial** (`residential`) | 120 MW | 250 m³ | −$500 de mantenimiento de red | −$500 de mantenimiento de red | **−150 pts** |
-| **Servicios críticos** (`critical`) | 60 MW | 100 m³ | −$300 de mantenimiento de red | −$300 de mantenimiento de red | **−450 pts** |
+| **Zona industrial** (`industry`) | 150 MW | 320 m³ | **+$3.000** de ingresos | **−$1.000** de paro técnico | **−60 pts** (paro y pérdida de empleo) |
+| **Zona residencial** (`residential`) | 130 MW | 280 m³ | −$500 de mantenimiento de red | −$500 de mantenimiento de red | **−150 pts** |
+| **Servicios críticos** (`critical`) | 80 MW | 150 m³ | −$300 de mantenimiento de red | −$300 de mantenimiento de red | **−450 pts** |
 | **Total por distrito** | **360 MW** | **750 m³** | **+$2.200 netos** | — | — |
 
 Notas de implementación que el salón nota:
 
 - Los "gastos fijos de red" de residencial y críticos **se cobran siempre**, estén encendidos o apagados.
-- El Bienestar se recorta solo cuando la ronda se resuelve con el sector apagado; la penalización se acumula en
-  la métrica interna `welfareSacrificed`, que es la que decide el título de **Distrito Mártir**.
+- El Bienestar se recorta solo cuando la ronda se resuelve con el sector apagado — incluida la industria, que
+  desde el rebalanceo 5.2 paga **−60** por el paro local; la penalización se acumula en la métrica interna
+  `welfareSacrificed`, que es la que decide el título de **Distrito Mártir**.
 - Los sectores se **rearman al 100% al inicio de cada ronda**: la decisión se toma de nuevo, ronda a ronda, y por
   eso las traiciones de última ronda se repiten.
 
@@ -176,34 +183,38 @@ Basta que **una** de las dos se pase para que haya blackout.
 
 ### Escenario A — RED ESTABLE
 
-| Concepto | Todos los distritos |
+| Concepto | Quién |
 |---|---|
-| Bienestar | **+100 pts** por garantizar la estabilidad |
+| Bienestar | **+100 pts** a cada distrito que **cedió al menos un sector** |
+| Bienestar | **+10 pts** de cortesía al que dejó **todo al 100%** (free-rider) |
 | Industria **encendida** | **+$3.000** de ingresos |
-| Industria **apagada** | **−$1.000** de paro técnico |
-| Mantenimiento de red residencial | **−$500** |
-| Mantenimiento de red crítica | **−$300** |
+| Industria **apagada** | **−$1.000** de paro técnico y **−60 pts** de Bienestar |
+| Mantenimiento de red residencial | **−$500** (se cobra siempre) |
+| Mantenimiento de red crítica | **−$300** (se cobra siempre) |
 | Zona residencial **apagada** | **−150 pts** de Bienestar |
 | Servicios críticos **apagados** | **−450 pts** de Bienestar |
 
 ### Escenario B — BLACKOUT (fallo colectivo)
 
-| Concepto | Todos los distritos |
+| Concepto | Quién |
 |---|---|
-| Bienestar | **−300 pts** por apagón masivo |
+| Bienestar | **−150 pts** por apagón masivo (golpe base para todos) |
+| **Malus por sobreconsumo** | **−250 pts** y **−$1.500 de multa** al distrito que mantuvo la **industria encendida** en pleno colapso |
+| **Carga civil sostenida** | **−50 pts** extra al distrito que mantuvo **activo el sector residencial** durante el colapso |
 | Ingresos industriales | **se anulan ($0)**: no hubo suministro para operar |
-| Industria apagada antes del fallo | **−$1.000** (paro técnico) |
+| Industria apagada antes del fallo | **−$1.000** (paro técnico) y **−60 pts** de Bienestar |
 | Costos fijos de red | **se cobran igual**: −$500 y −$300 |
 | Sectores civiles apagados | se suman sus penalizaciones individuales (−150 / −450) |
 | Contador global | **+1 apagón** |
 
 Ejemplos de una ronda completa, distrito tipo, con industria apagada y sectores civiles encendidos:
 
-- Estable → Bienestar 1.000 → **1.100** (+100); Tesorería 10.000 → **8.200** (−1.800).
-- Blackout → Bienestar 1.000 → **700** (−300); Tesorería 10.000 → **9.200** (−800).
+- Estable con la industria apagada → Bienestar 1.000 → **1.040** (+100 −60); Tesorería 10.000 → **8.200** (−1.800).
+- Blackout sin ceder nada → Bienestar 1.000 → **550** (−150 −250 −50); Tesorería 10.000 → **7.700** (−2.300).
 
-Ese detalle explica la trampa del juego: **el apagón no siempre es lo más caro en caja** (anula ingresos pero no
-paga el paro), pero sí es letal en Bienestar y, con dos, termina la partida para todos.
+Las dos cuentas importan: **el parasito paga la multa** (−$1.500) y pierde más Bienestar que cualquier mesa que
+haya cedido carga (−450 contra −260 de quien apagó solo la industria o −360 de quien apagó industria y
+residencial). El apagón sigue siendo letal y, con dos, termina la partida para todos.
 
 ---
 
@@ -213,10 +224,10 @@ Cada ronda tiene su crisis fija; sobre ella se sortean los incidentes (sección 
 
 | # | Crisis | Contexto | Efecto exacto | Conflicto que provoca |
 |---|---|---|---|---|
-| 1 | **MANTENIMIENTO DE GASODUCTO TRONCAL** (tutorial) | Fuga de presión en la válvula regional | Gas ×0,80 · eléctrico ×1,00 | Basta apagar 1 o 2 industrias: enseña la mecánica sin castigar |
-| 2 | **SEQUÍA HIDROLÓGICA EXTREMA** | Embalses en niveles críticos | Eléctrico ×0,65 · gas ×1,00 | Déficit severo de MW: al menos el 60% de las industrias debe ceder |
-| 3 | **ONDA POLAR Y CONGELAMIENTO** | Pico de calefacción y agua caliente | Demanda residencial ×2 (+120 MW y +250 m³ por distrito) | El consumo civil se come el margen: mantener industrias es casi imposible sin cortar áreas civiles |
-| 4 | **COLAPSO EN CADENA DE SUBESTACIONES** | Fallo sincronizado de alta tensión y baja presión | Eléctrico ×0,50 · gas ×0,50 | Dilema extremo: todas las industrias fuera y varios distritos con cortes civiles selectivos |
+| 1 | **MANTENIMIENTO DE GASODUCTO TRONCAL** (tutorial) | Fuga de presión en la válvula regional | Gas ×0,80 · eléctrico ×1,00 | Bastan 2 de 4 industrias apagadas (con 1 sola, el gas se pasa): enseña la mecánica sin castigar |
+| 2 | **SEQUÍA HIDROLÓGICA EXTREMA** | Embalses en niveles críticos | Eléctrico ×0,65 · gas ×1,00 | Déficit severo de MW: hay que apagar **todas** las industrias o combinarlo con cortes civiles |
+| 3 | **ONDA POLAR Y CONGELAMIENTO** | Pico de calefacción y agua caliente | Demanda residencial ×2 (+130 MW y +280 m³ por distrito) | El consumo civil se come el margen: hay que apagar toda la industria y decidir qué áreas civiles caen |
+| 4 | **COLAPSO EN CADENA DE SUBESTACIONES** | Fallo sincronizado de alta tensión y baja presión | Eléctrico ×0,50 · gas ×0,50 | Dilema extremo: **toda** la industria fuera **y al menos un distrito** cediendo el residencial (con 10 MW de margen) |
 
 ---
 
@@ -248,8 +259,15 @@ de efecto (por ejemplo: `ELÉCTRICA −10%`, `DEMANDA CIVIL x1,15`, `−$400 A T
    base supera el techo.
 2. **La ronda siempre tiene salida:** existe al menos un reparto de cortes que salva la red, en cualquier ronda y
    con cualquier combinación de incidentes (por eso los incidentes de bloqueo solo pueden congelar los críticos).
-3. La prueba `ningún sorteo hace la ronda irresoluble ni perdona al que no toca nada` recorre 400+ combinaciones
-   (rondas 2–4, paneles de 3 a 6 distritos, todos los pares de incidentes de familias distintas).
+3. **Ninguna palanca resuelve la crisis sola (rebalanceo 5.2):** en las rondas 2, 3 y 4, un distrito que mueva sus
+   tres palancas mientras el resto del panel se queda al 100% colapsa en **las 8 combinaciones posibles**.
+4. **El free-rider no sale gratis:** en un apagón, quien mantuvo la industria encendida pierde **-250 de Bienestar
+   y $1.500** más que cualquier mesa que haya cedido carga; y si la red se salva, quien no cortó nada cobra **+10**
+   en vez del bono de **+100**.
+5. La prueba `ningún sorteo hace la ronda irresoluble ni perdona al que no toca nada` recorre 400+ combinaciones
+   (rondas 2–4, paneles de 3 a 6 distritos, todos los pares de incidentes de familias distintas), y
+   `combinaciones a ciegas` recorre las 8 combinaciones de switches por ronda. Con la estrategia coordinada,
+   `--scan 300` sobrevive **300 de 300 semillas**.
 
 ### Catálogo completo (19 incidentes)
 
@@ -346,59 +364,62 @@ Salida real del motor (`node scripts/reference-game.js --seed 4200`), jugando co
 explicable: cada distrito apaga **el mínimo** que salva la red, empezando por la industria y sin tocar los críticos.
 
 ```
-PARTIDA DE REFERENCIA // semilla 4200 // 4 distritos // 5.1
+PARTIDA DE REFERENCIA // semilla 4200 // 4 distritos // 5.2
 Capacidad base del panel: 1440 MW y 3000 m3 (igual a la demanda base)
 
 === RONDA 1 // MANTENIMIENTO DE GASODUCTO TRONCAL (TUTORIAL) ===
   incidentes: sin incidentes
   techo: 1440 MW (x1) / 2400 m3 (x0.8)
   demanda si nadie cede: 1440 MW / 3000 m3
-  plan: cada distrito apaga [IND] -> 180 MW / 350 m3 por distrito
-  total: 720 MW / 1400 m3 contra 1440 MW / 2400 m3
-  RESOLUCIÓN: STABLE // margen 720 MW / 1000 m3
-  distrito tipo: Bienestar 1000 -> 1100 (+100) // Tesorería 10000 -> 8200 (-1800)
+  plan: cada distrito apaga [IND] -> 210 MW / 430 m3 por distrito
+  total: 840 MW / 1720 m3 contra 1440 MW / 2400 m3
+  RESOLUCIÓN: STABLE // margen 600 MW / 680 m3
+  distrito tipo: Bienestar 1000 -> 1040 (+40) // Tesorería 10000 -> 8200 (-1800)
 
 === RONDA 2 // SEQUÍA HIDROLÓGICA EXTREMA (DÉFICIT SEVERO DE MW) ===
   incidentes: SAQUEO EN LOS BARRIOS DEL ESTE  [-80 BIENESTAR A TODOS · -120 EXTRA SI HAY APAGÓN]
   techo: 936 MW (x0.65) / 3000 m3 (x1)
   demanda si nadie cede: 1440 MW / 3000 m3
-  plan: cada distrito apaga [IND] -> 180 MW / 350 m3 por distrito
-  RESOLUCIÓN: STABLE // margen 216 MW / 1600 m3
-  distrito tipo: Bienestar 1100 -> 1120 (+20) // Tesorería 8200 -> 6400 (-1800)
+  plan: cada distrito apaga [IND] -> 210 MW / 430 m3 por distrito
+  total: 840 MW / 1720 m3 contra 936 MW / 3000 m3
+  RESOLUCIÓN: STABLE // margen 96 MW / 1280 m3
+  distrito tipo: Bienestar 1040 -> 1000 (-40) // Tesorería 8200 -> 6400 (-1800)
 
 === RONDA 3 // ONDA POLAR Y CONGELAMIENTO (PICO DE DEMANDA CIVIL) ===
   incidentes: COMPRESOR TRONCAL EN PARADA  [GAS -15%]
   techo: 1440 MW (x1) / 2550 m3 (x0.85)
-  demanda si nadie cede: 1920 MW / 4000 m3
-  plan: cada distrito apaga [IND] -> 300 MW / 600 m3 por distrito
-  RESOLUCIÓN: STABLE // margen 240 MW / 150 m3
-  distrito tipo: Bienestar 1120 -> 1200 (+100) // Tesorería 6400 -> 4600 (-1800)
+  demanda si nadie cede: 1960 MW / 4120 m3
+  plan: cada distrito apaga [RES] -> 230 MW / 470 m3 por distrito
+  RESOLUCIÓN: STABLE // margen 520 MW / 670 m3
+  distrito tipo: Bienestar 1000 -> 950 (-50) // Tesorería 6400 -> 8600 (+2200)
 
 === RONDA 4 // COLAPSO EN CADENA DE SUBESTACIONES (FINAL) ===
   incidentes: TORRE DE ENFRIAMIENTO AL 70% [ELÉCTRICA -10%] + BUQUE METANERO ATRACADO EN PUERTO [GAS +10%]
   techo: 648 MW (x0.45) / 1650 m3 (x0.55)
   demanda si nadie cede: 1440 MW / 3000 m3
-  plan: cada distrito apaga [IND, RES] -> 60 MW / 100 m3 por distrito
-  RESOLUCIÓN: STABLE // margen 408 MW / 1250 m3
-  distrito tipo: Bienestar 1200 -> 1150 (-50) // Tesorería 4600 -> 2800 (-1800)
+  plan: cada distrito apaga [IND, RES] -> 80 MW / 150 m3 por distrito
+  RESOLUCIÓN: STABLE // margen 328 MW / 1050 m3
+  distrito tipo: Bienestar 950 -> 840 (-110) // Tesorería 8600 -> 6800 (-1800)
 
 === CLASIFICACIÓN FINAL ===
-  1. NEO-DOWNTOWN: PEF 1178 (Bienestar 1150 + Tesorería 2800/100) // sacrificó 150 de Bienestar // industrias encendidas 0/4
+  1. NEO-DOWNTOWN: PEF 908 (Bienestar 840 + Tesorería 6800/100) // sacrificó 480 de Bienestar // industrias encendidas 1/4
   ...
 ```
 
 Lecturas para clase:
 
-- **La ronda 3 es la trampa:** con la onda polar hay que apagar la industria *y* convivir con 1.920 MW de demanda;
-  el margen de 150 m³ es tan fino que un solo distrito que encienda su industria vuelve al blackout.
-- **La ronda 4 da mucha holgura en MW (408 MW)**, así que la tentación de reencender industria aparece justo en el
-  último minuto. El incidente `TORRE DE ENFRIAMIENTO` recorta el techo un 10% adicional y castiga a quien cuente
-  con el margen del documento.
-- En un panel simétrico todos los distritos terminan empatados (PEF 1178): el PEF no premia "no perder", premia
+- **La ronda 2 es el primer apretón real:** con la sequía hay que apagar la industria de casi todo el panel
+  (apagar 3 de 4 industrias deja la red en 990 MW sobre un techo de 936) y el margen final es de 96 MW.
+- **La ronda 3 es la trampa civil:** el residencial duplicado lleva la demanda a 1.960 MW / 4.120 m³; el que
+  resuelve apagando residencial en vez de industria se queda sin ingresos justo antes del final.
+- **La ronda 4 obliga a un corte extremo:** apagar toda la industria aún deja 840 MW sobre un techo de 720; hace
+  falta que **al menos un distrito** ceda también el residencial (710 MW, 10 de margen). El incidente
+  `TORRE DE ENFRIAMIENTO` recorta el techo un 10% adicional y castiga a quien cuente con el margen del documento.
+- En un panel simétrico todos los distritos terminan empatados (PEF 908): el PEF no premia "no perder", premia
   **quién aguantó la industria encendida** sin tumbar la red. Ahí está la tensión de verdad.
-- Con la estrategia de referencia, **300 de 300 semillas se pueden sobrevivir** (`--scan 300`): si el salón falla, es
+- Con la estrategia de referencia, **las 300 semillas se pueden sobrevivir** (`--scan 300`): si el salón falla, es
   por coordinación, no por imposibilidad. Con `--scan` también se comprueba que los 19 incidentes salen con
-  frecuencia parecida (~50–77 veces en 300 partidas).
+  frecuencia parecida.
 
 ---
 
@@ -526,19 +547,19 @@ curl -s -o /dev/null -w "%{http_code}\n" http://<IP-LAN>:3006/host/   # 200
 ## 14. Verificación: qué está probado y cómo repetirlo
 
 ```bash
-npm test              # motor + partida completa contra el servidor Node  (35 pruebas)
-npm run test:engine   # solo la aritmética y el sorteo                    (24 pruebas)
+npm test              # motor + partida completa contra el servidor Node  (43 pruebas)
+npm run test:engine   # solo la aritmética y el sorteo                    (31 pruebas)
 npm run test:worker   # partida completa contra el Durable Object real     (9 pruebas, requiere build:static)
 npm run typecheck     # tsc --noEmit
 node scripts/reference-game.js --scan 300   # balance: ¿tiene salida cada semilla?
 ```
 
-Estado verificado de esta versión (5.1):
+Estado verificado de esta versión (5.2):
 
 | Suite | Pruebas | Qué cubre |
 |---|---|---|
-| `tests/engine.test.js` | **24/24 ✅** | Tabla de sectores, capacidad, resolución, PEF, sorteo reproducible por semilla, no repetición, bloqueos, economía de incidentes, **irresolubilidad y "no hacer nada nunca salva la red" en 400+ combinaciones** |
-| `tests/e2e.test.js` | **11/11 ✅** | Partida completa contra `server.js` con semilla fija: clave maestra, reclamo de distritos, override del anfitrión, **rechazo de palanca bloqueada (mesa y anfitrión)**, resolución automática, segundo apagón, acta final |
+| `tests/engine.test.js` | **31/31 ✅** | Tabla de sectores del rebalanceo, capacidad, resolución, PEF, **anti free-rider (malus, multa y bono condicionado)**, **combinaciones a ciegas (≥6 de 8 colapsan en las rondas 2, 3 y 4)**, sorteo reproducible por semilla, no repetición, bloqueos, economía de incidentes, **irresolubilidad y "no hacer nada nunca salva la red" en 400+ combinaciones** |
+| `tests/e2e.test.js` | **12/12 ✅** | Partida completa contra `server.js` con semilla fija: clave maestra, reclamo de distritos, override del anfitrión, **rechazo de palanca bloqueada (mesa y anfitrión)**, resolución automática, segundo apagón, reinicio a mitad de partida, acta final |
 | `tests/worker.e2e.test.js` | **9/9 ✅** | Lo mismo contra `wrangler dev` + Durable Objects: aislamiento por PIN, clave dentro del objeto, alarmas, estado persistido |
 | `npm run typecheck` | **✅** | Contrato de tipos del cliente |
 | `npm run build` / `build:static` | **✅** | Compilación de producción y export estático |

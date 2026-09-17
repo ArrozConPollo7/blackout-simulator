@@ -217,7 +217,8 @@ test("Blackout en Cloudflare Workers + Durable Objects", async (t) => {
     await waitFor(() => teamByDistrict(host.state, "D-01").sectors.industry === false, {
       label: "industria apagada por la mesa A",
     });
-    assert.equal(host.state.demand.perTeam[teamA.teamId].mw, 180);
+    // Industria fuera: residencial 130 + crítico 80 (rebalanceo 5.2).
+    assert.equal(host.state.demand.perTeam[teamA.teamId].mw, 130 + 80);
 
     host.send({ type: "HOST_TOGGLE_SECTOR", teamId: teamA.teamId, sector: "industry", state: true });
     await waitFor(() => teamByDistrict(host.state, "D-01").sectors.industry === true, {
@@ -246,7 +247,9 @@ test("Blackout en Cloudflare Workers + Durable Objects", async (t) => {
     assert.equal(resolution.cause, "GAS");
     assert.equal(host.state.blackoutCount, 1);
     assert.equal(host.state.deadlineTs, null);
-    assert.equal(host.state.teams[teamA.teamId].welfare, 700);
+    // 1.000 - 150 (apagón) - 250 (sobreconsumo industrial) - 50 (carga civil).
+    assert.equal(host.state.teams[teamA.teamId].welfare, 1000 - 150 - 250 - 50);
+    assert.equal(host.state.teams[teamA.teamId].welfare, 550);
   });
 
   await t.test("segundo apagón: fin de partida irreversible y reinicio", async () => {

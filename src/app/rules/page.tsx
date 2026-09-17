@@ -133,14 +133,20 @@ export default function RulesPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="bg-primary/5 border border-primary/40 rounded-lg p-3 font-data text-[11px] flex flex-col gap-1">
               <span className="text-primary font-bold uppercase text-xs">Red estable</span>
-              <span className="text-on-surface">+100 Bienestar a todos los distritos.</span>
-              <span className="text-on-surface">Industria encendida: +$3.000. Apagada: -$1.000.</span>
+              <span className="text-on-surface">
+                +100 Bienestar si el distrito cedió al menos un sector; el que dejó todo al 100% solo cobra +10.
+              </span>
+              <span className="text-on-surface">Industria encendida: +$3.000. Apagada: -$1.000 y -60 Bienestar (paro local).</span>
               <span className="text-on-surface">Mantenimiento de red residencial: -$500 // críticos: -$300.</span>
               <span className="text-on-surface">Sector residencial apagado: -150 Bienestar // críticos: -450.</span>
             </div>
             <div className="bg-error/5 border border-error/50 rounded-lg p-3 font-data text-[11px] flex flex-col gap-1">
               <span className="text-error font-bold uppercase text-xs">Blackout colectivo</span>
-              <span className="text-on-surface">-300 Bienestar para todos los distritos.</span>
+              <span className="text-on-surface">-150 Bienestar para todos los distritos.</span>
+              <span className="text-on-surface">
+                Malus de sobreconsumo: -250 Bienestar y -$1.500 de multa si el distrito mantuvo la industria encendida.
+              </span>
+              <span className="text-on-surface">-50 Bienestar adicional si sostuvo el sector residencial durante el colapso.</span>
               <span className="text-on-surface">Los ingresos industriales se anulan ($0).</span>
               <span className="text-on-surface">
                 Los costos fijos de red (-$500 y -$300) se cobran igual.

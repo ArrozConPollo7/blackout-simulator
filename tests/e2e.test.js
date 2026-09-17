@@ -253,8 +253,9 @@ test("BLACKOUT: GRID COLLAPSE — partida completa end-to-end", async (t) => {
     });
 
     const demandAfter = host.state.demand.perTeam[teamA.teamId];
-    assert.equal(demandAfter.mw, 120 + 60);
-    assert.equal(demandAfter.gas, 250 + 100);
+    // Rebalanceo 5.2: residencial 130/280 + crítico 80/150.
+    assert.equal(demandAfter.mw, 130 + 80);
+    assert.equal(demandAfter.gas, 280 + 150);
 
     // Bug corregido: el anfitrión puede anular sectores de un distrito concreto.
     host.send({ type: "HOST_TOGGLE_SECTOR", teamId: teamA.teamId, sector: "industry", state: true });
@@ -311,8 +312,12 @@ test("BLACKOUT: GRID COLLAPSE — partida completa end-to-end", async (t) => {
     assert.equal(host.state.blackoutCount, 1);
 
     const team = host.state.teams[teamA.teamId];
-    assert.equal(team.welfare, 700);
-    assert.equal(team.budget, 9200);
+    // 1.000 - 150 (apagón) - 250 (sobreconsumo industrial) - 50 (carga civil).
+    assert.equal(team.welfare, 1000 - 150 - 250 - 50);
+    assert.equal(team.welfare, 550);
+    // 10.000 - 500 - 300 - 1.500 (multa por sostener la industria).
+    assert.equal(team.budget, 10000 - 500 - 300 - 1500);
+    assert.equal(team.budget, 7700);
     assert.equal(host.state.phase, "RESOLUTION");
   });
 
@@ -346,11 +351,12 @@ test("BLACKOUT: GRID COLLAPSE — partida completa end-to-end", async (t) => {
 
     await waitFor(
       () =>
-        host.state.demand.mw === 720 &&
+        host.state.demand.mw === 840 &&
         Object.values(host.state.teams).every((team) => team.sectors.industry === false),
       { label: "las 4 industrias cedidas" }
     );
-    assert.equal(host.state.demand.gas, 4 * (250 + 100));
+    assert.equal(host.state.demand.mw, 4 * (130 + 80));
+    assert.equal(host.state.demand.gas, 4 * (280 + 150));
     assert.equal(host.state.phase, "PLANNING", "el recorte se pactó sin reloj");
 
     // El anfitrión abre el reloj y lo PAUSA enseguida: el tiempo queda congelado.
@@ -382,19 +388,21 @@ test("BLACKOUT: GRID COLLAPSE — partida completa end-to-end", async (t) => {
     await waitFor(() => host.state.phase === "RESOLUTION", { label: "resolución de la ronda 2", timeout: 10000 });
     const resolution = host.state.lastResolution;
     assert.equal(resolution.outcome, "STABLE");
-    assert.equal(resolution.marginMW, 936 - 720);
+    assert.equal(resolution.marginMW, 936 - 840);
     assert.deepEqual(resolution.incidents.map((i) => i.id), ["inc-cuarentena"]);
 
     const team = host.state.teams[teamA.teamId];
     assert.equal(team.sectors.industry, false);
-    // 700 + 100 de red estable; la cuarentena no toca bienestar ni caja.
-    assert.equal(team.welfare, 700 + 100 + incidentSum(host.state, "welfareAll"));
+    // 550 + 100 de red estable - 60 de paro industrial; la cuarentena no toca nada.
+    assert.equal(team.welfare, 550 + 100 - 60 + incidentSum(host.state, "welfareAll"));
+    assert.equal(team.welfare, 590);
     // -1.000 paro técnico -500 red residencial -300 red crítica (+ incidentes).
-    assert.equal(team.budget, 9200 - 1000 - 500 - 300 + incidentSum(host.state, "budgetAll"));
+    assert.equal(team.budget, 7700 - 1000 - 500 - 300 + incidentSum(host.state, "budgetAll"));
+    assert.equal(team.budget, 5900);
     assert.equal(host.state.blackoutCount, 1);
   });
 
-  await t.test("rondas 3 y 4: la demanda civil se duplica y el dilema final exige apagar todas las industrias", async () => {
+  await t.test("rondas 3 y 4: el residencial duplicado (+130 MW / +280 m3) y el segundo apagón", async () => {
     host.send({ type: "HOST_NEXT_ROUND" });
     await waitFor(() => host.state.currentRound === 3 && host.state.phase === "PLANNING", {
       label: "planificación de la ronda 3",
@@ -407,10 +415,11 @@ test("BLACKOUT: GRID COLLAPSE — partida completa end-to-end", async (t) => {
     assert.deepEqual(host.state.incidents.map((i) => i.id), ["inc-anillo"]);
     assert.equal(host.state.activeCrisis.residentialDemandMultiplier, 2);
     const resFactor = 2 * incidentDemandFactor(host.state, "residential");
-    assert.equal(host.state.demand.mw, 4 * Math.round(180 + 120 * resFactor + 60 * incidentDemandFactor(host.state, "critical")));
-    assert.equal(host.state.demand.gas, 4 * Math.round(400 + 250 * resFactor + 100 * incidentDemandFactor(host.state, "critical")));
-    assert.equal(host.state.demand.mw, 1440 + 480);
-    assert.equal(host.state.demand.gas, 3000 + 1000);
+    assert.equal(host.state.demand.mw, 4 * Math.round(150 + 130 * resFactor + 80 * incidentDemandFactor(host.state, "critical")));
+    assert.equal(host.state.demand.gas, 4 * Math.round(320 + 280 * resFactor + 150 * incidentDemandFactor(host.state, "critical")));
+    // 1.440 + 520 MW y 3.000 + 1.120 m3 sobre la base de 4 distritos.
+    assert.equal(host.state.demand.mw, 1440 + 520);
+    assert.equal(host.state.demand.gas, 3000 + 1120);
     assert.equal(host.state.capacity.maxMW, Math.round(1440 * 0.92));
     assert.equal(host.state.capacity.maxGas, 3000);
 
@@ -419,8 +428,8 @@ test("BLACKOUT: GRID COLLAPSE — partida completa end-to-end", async (t) => {
     await waitFor(() => host.state.phase === "GAME_OVER", { label: "segundo apagón: fin de partida" });
 
     assert.equal(host.state.lastResolution.outcome, "BLACKOUT");
-    assert.equal(host.state.lastResolution.totalMW, 1920);
-    assert.equal(host.state.lastResolution.totalGas, 4000);
+    assert.equal(host.state.lastResolution.totalMW, 1960);
+    assert.equal(host.state.lastResolution.totalGas, 4120);
     assert.equal(host.state.blackoutCount, 2);
     // La semilla y el guion de incidentes quedan registrados en el acta final.
     assert.equal(host.state.finalResults.seed, 70);

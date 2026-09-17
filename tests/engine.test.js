@@ -42,24 +42,37 @@ function turnOff(room, indexes, sector) {
   rules.recomputeDerived(room);
 }
 
-test("tabla de sectores coincide con el documento §3", () => {
+test("tabla de sectores del rebalanceo 5.2 (brecha de demanda acortada)", () => {
   const { industry, residential, critical } = rules.SECTOR_SPECS;
 
-  assert.equal(industry.demandMW, 180);
-  assert.equal(industry.demandGas, 400);
+  // La industria baja de 180/400 a 150/320: sigue siendo el sector más pesado,
+  // pero apagarla sola ya no basta para resolver la mayoría de las crisis.
+  assert.equal(industry.demandMW, 150);
+  assert.equal(industry.demandGas, 320);
   assert.equal(industry.revenueOn, 3000);
   assert.equal(industry.revenueOff, -1000);
-  assert.equal(industry.welfareOff, 0);
+  // Fricción social: apagar la industria cuesta bienestar (paro local).
+  assert.equal(industry.welfareOff, -60);
 
-  assert.equal(residential.demandMW, 120);
-  assert.equal(residential.demandGas, 250);
+  assert.equal(residential.demandMW, 130);
+  assert.equal(residential.demandGas, 280);
   assert.equal(residential.gridFee, -500);
   assert.equal(residential.welfareOff, -150);
 
-  assert.equal(critical.demandMW, 60);
-  assert.equal(critical.demandGas, 100);
+  assert.equal(critical.demandMW, 80);
+  assert.equal(critical.demandGas, 150);
   assert.equal(critical.gridFee, -300);
   assert.equal(critical.welfareOff, -450);
+
+  // El total por distrito NO cambia: la capacidad regional sigue idéntica.
+  assert.equal(
+    industry.demandMW + residential.demandMW + critical.demandMW,
+    rules.BASE_DEMAND_MW_PER_DISTRICT,
+  );
+  assert.equal(
+    industry.demandGas + residential.demandGas + critical.demandGas,
+    rules.BASE_DEMAND_GAS_PER_DISTRICT,
+  );
 });
 
 test("demanda base por distrito y por panel de 4 distritos", () => {
@@ -88,9 +101,10 @@ test("multiplicadores de crisis del documento §6", () => {
   assert.equal(rules.regionalCapacity(4, r2).maxGas, 3000);
 
   assert.equal(r3.residentialDemandMultiplier, 2);
+  // La ronda 3 duplica el residencial: +130 MW / +280 m3 sobre el total base.
   const doubled = rules.districtDemand(rules.emptySectors(true), r3);
-  assert.equal(doubled.mw, 360 + 120);
-  assert.equal(doubled.gas, 750 + 250);
+  assert.equal(doubled.mw, 360 + 130);
+  assert.equal(doubled.gas, 750 + 280);
 
   assert.equal(r4.electricMultiplier, 0.5);
   assert.equal(r4.gasMultiplier, 0.5);
@@ -125,14 +139,31 @@ test("ronda 1: sin ceder carga hay BLACKOUT por gas", () => {
   assert.equal(room.phase, "RESOLUTION");
 
   const team = result.teamResults[0];
-  assert.equal(team.welfareDelta, rules.BLACKOUT_WELFARE_HIT);
-  assert.equal(team.welfareAfter, 700);
-  // Ingresos industriales anulados ($0) + gastos fijos de red residencial y crítica
-  assert.equal(team.budgetDelta, -800);
-  assert.equal(team.budgetAfter, 9200);
+  // Nadie cedió nada: golpe base -150, sobreconsumo industrial -250 (industria
+  // encendida en pleno colapso) y -50 por sostener la carga civil.
+  assert.equal(
+    team.welfareDelta,
+    rules.BLACKOUT_WELFARE_HIT + rules.BLACKOUT_HOG_MALUS + rules.BLACKOUT_RESIDENTIAL_MALUS,
+  );
+  assert.equal(team.welfareAfter, 550);
+  // Ingresos industriales anulados ($0) + -500 red residencial + -300 red crítica
+  // + multa regulatoria del sobreconsumo (-1.500).
+  assert.equal(team.budgetDelta, -500 - 300 + rules.BLACKOUT_HOG_FINE);
+  assert.equal(team.budgetAfter, 7700);
 });
 
-test("ronda 1: apagar 2 industrias salva la red (tutorial del documento)", () => {
+test("ronda 1: apagar 2 de 4 industrias salva la red, apagar 1 no alcanza (tutorial)", () => {
+  // Una sola industria apagada deja el gas en 2.680 m3 sobre un techo de 2.400.
+  const soloUna = makeRoom(4);
+  rules.startRound(soloUna, 1);
+  turnOff(soloUna, [0], "industry");
+  const fallo = rules.resolveRound(soloUna);
+  assert.equal(fallo.outcome, "BLACKOUT");
+  assert.equal(fallo.cause, "GAS");
+  assert.equal(fallo.totalMW, 3 * 360 + (130 + 80));
+  assert.equal(fallo.totalGas, 3 * 750 + (280 + 150));
+
+  // Con 2 de 4 industrias apagadas la red aguanta con 40 m3 de margen.
   const room = makeRoom(4);
   rules.startRound(room, 1);
   turnOff(room, [0, 1], "industry");
@@ -140,21 +171,22 @@ test("ronda 1: apagar 2 industrias salva la red (tutorial del documento)", () =>
   const result = rules.resolveRound(room);
 
   assert.equal(result.outcome, "STABLE");
-  assert.equal(result.totalMW, 1080);
-  assert.equal(result.totalGas, 2200);
-  assert.equal(result.marginGas, 200);
+  assert.equal(result.totalMW, 2 * 360 + 2 * (130 + 80));
+  assert.equal(result.totalGas, 2 * 750 + 2 * (280 + 150));
+  assert.equal(result.marginGas, 40);
 
-  // Distritos con industria encendida: +3.000 - 500 - 300 = +2.200
+  // El que se quedó al 100% (free-rider) cobra cortesía, no el bono completo.
   const onTeam = result.teamResults[2];
-  assert.equal(onTeam.welfareDelta, 100);
-  assert.equal(onTeam.budgetDelta, 2200);
+  assert.equal(onTeam.welfareDelta, rules.STABLE_WELFARE_BONUS_FREE_RIDER);
+  assert.equal(onTeam.welfareAfter, 1010);
+  assert.equal(onTeam.budgetDelta, 3000 - 500 - 300);
   assert.equal(onTeam.budgetAfter, 12200);
-  assert.equal(onTeam.welfareAfter, 1100);
 
-  // Distritos con industria apagada: -1.000 - 500 - 300 = -1.800
+  // El que apagó la industria cobra el bono completo menos el paro local.
   const offTeam = result.teamResults[0];
-  assert.equal(offTeam.welfareDelta, 100);
-  assert.equal(offTeam.budgetDelta, -1800);
+  assert.equal(offTeam.welfareDelta, rules.STABLE_WELFARE_BONUS + rules.SECTOR_SPECS.industry.welfareOff);
+  assert.equal(offTeam.welfareAfter, 1040);
+  assert.equal(offTeam.budgetDelta, -1000 - 500 - 300);
   assert.equal(offTeam.budgetAfter, 8200);
 });
 
@@ -169,17 +201,25 @@ test("cortes civiles: penalizaciones de Bienestar y distrito mártir acumulado",
   assert.equal(result.outcome, "STABLE");
 
   const martyr = result.teamResults[0];
-  // +100 estable -150 residencial -450 crítico
-  assert.equal(martyr.welfareDelta, -500);
-  assert.equal(martyr.welfareAfter, 500);
-  assert.equal(room.teams["district-D-01"].welfareSacrificed, 600);
+  // +100 estable -60 industria -150 residencial -450 crítico
+  assert.equal(
+    martyr.welfareDelta,
+    rules.STABLE_WELFARE_BONUS - 60 - 150 - 450,
+  );
+  assert.equal(martyr.welfareDelta, -560);
+  assert.equal(martyr.welfareAfter, 440);
+  assert.equal(room.teams["district-D-01"].welfareSacrificed, 660);
 
-  const residentialOnly = result.teamResults[1];
-  assert.equal(residentialOnly.welfareDelta, -50);
-  assert.equal(room.teams["district-D-02"].welfareSacrificed, 150);
+  // Industria y residencial apagados, críticos encendidos: +100 -60 -150
+  const civilCut = result.teamResults[1];
+  assert.equal(civilCut.welfareDelta, rules.STABLE_WELFARE_BONUS - 60 - 150);
+  assert.equal(civilCut.welfareDelta, -110);
+  assert.equal(room.teams["district-D-02"].welfareSacrificed, 210);
 
+  // No cortó nada: cortesía por red estable, no el bono de colaboración.
   const untouched = result.teamResults[3];
-  assert.equal(untouched.welfareDelta, 100);
+  assert.equal(untouched.welfareDelta, rules.STABLE_WELFARE_BONUS_FREE_RIDER);
+  assert.equal(untouched.welfareDelta, 10);
   assert.equal(room.teams["district-D-04"].welfareSacrificed, 0);
 });
 
@@ -195,70 +235,281 @@ test("blackout penaliza también los cortes civiles previos", () => {
   assert.equal(result.cause, "ELECTRICIDAD");
 
   const team = result.teamResults[0];
-  // -300 apagón -150 residencial -450 crítico
-  assert.equal(team.welfareDelta, -900);
-  assert.equal(team.welfareAfter, 100);
+  // -150 apagón -60 industria -150 residencial -450 crítico (sin sobreconsumo:
+  // esta mesa sí había cortado, así que no paga ni malus ni multa).
+  assert.equal(team.welfareDelta, rules.BLACKOUT_WELFARE_HIT - 60 - 150 - 450);
+  assert.equal(team.welfareDelta, -810);
+  assert.equal(team.welfareAfter, 190);
   // -1.000 paro técnico -500 red residencial -300 red crítica
   assert.equal(team.budgetDelta, -1800);
   assert.equal(team.budgetAfter, 8200);
 });
 
-test("ronda 2: el déficit eléctrico obliga a ceder al menos el 60% de las industrias", () => {
+test("anti free-rider: en el colapso el que no cede carga paga malus y multa", () => {
+  const room = makeRoom(4);
+  rules.startRound(room, 2); // techo eléctrico de 936 MW
+  turnOff(room, [0], "residential"); // el distrito 0 cede industria y residencial
+  turnOff(room, [0, 1], "industry"); // el distrito 1 cede solo industria
+  // Los distritos 2 y 3 se quedan al 100%: 1.010 MW sobre un techo de 936.
+
+  const result = rules.resolveRound(room);
+  assert.equal(result.outcome, "BLACKOUT");
+  assert.equal(result.cause, "ELECTRICIDAD");
+  assert.equal(result.totalMW, 80 + 210 + 360 + 360); // 1.010 MW
+
+  const mixto = result.teamResults[0]; // cedió industria y residencial
+  const industrial = result.teamResults[1]; // cedió solo industria
+  const parasito = result.teamResults[2]; // no cedió nada
+  const otroParasito = result.teamResults[3];
+
+  // El que no cedió: base -150, sobreconsumo industrial -250 y carga civil -50.
+  assert.equal(
+    parasito.welfareDelta,
+    rules.BLACKOUT_WELFARE_HIT + rules.BLACKOUT_HOG_MALUS + rules.BLACKOUT_RESIDENTIAL_MALUS,
+  );
+  assert.equal(parasito.welfareDelta, -450);
+  // Y en caja: ingresos anulados ($0) - 500 - 300 - 1.500 de multa regulatoria.
+  assert.equal(parasito.budgetDelta, -500 - 300 + rules.BLACKOUT_HOG_FINE);
+  assert.equal(parasito.budgetDelta, -2300);
+
+  // El que cedió industria pero dejó el residencial encendido: se libra del malus
+  // industrial y de la multa, pero paga el paro local (-60) y la carga civil que
+  // sostuvo durante el colapso (-50).
+  assert.equal(
+    industrial.welfareDelta,
+    rules.BLACKOUT_WELFARE_HIT - 60 + rules.BLACKOUT_RESIDENTIAL_MALUS,
+  );
+  assert.equal(industrial.welfareDelta, -260);
+  assert.equal(industrial.budgetDelta, -1000 - 500 - 300);
+
+  // El que cedió industria y residencial: -60 y -150, sin malus ni multa.
+  assert.equal(mixto.welfareDelta, rules.BLACKOUT_WELFARE_HIT - 60 - 150);
+  assert.equal(mixto.welfareDelta, -360);
+  assert.equal(mixto.budgetDelta, -1000 - 500 - 300);
+
+  // Nadie que haya cedido carga termina peor que el que no cedió nada.
+  for (const colaborador of [industrial, mixto]) {
+    assert.ok(
+      colaborador.welfareDelta > parasito.welfareDelta,
+      "en apagón el parásito pierde más bienestar que cualquier colaborador",
+    );
+    assert.ok(
+      colaborador.budgetDelta > parasito.budgetDelta,
+      "y más caja: la multa regulatoria pega solo al que sostuvo la industria",
+    );
+    assert.ok(
+      colaborador.welfareDelta - parasito.welfareDelta >= 90,
+      "la diferencia de bienestar es sustancial (no un empate técnico)",
+    );
+  }
+
+  assert.equal(otroParasito.welfareDelta, parasito.welfareDelta);
+  assert.equal(otroParasito.budgetDelta, parasito.budgetDelta);
+});
+
+test("anti free-rider: si la red se salva, el que no cortó nada no cobra el bono", () => {
+  const room = makeRoom(4);
+  rules.startRound(room, 2); // techo 936 MW: sobra margen con 3 mesas cediendo
+  turnOff(room, [0], "industry"); // el distrito 0 cede solo industria
+  turnOff(room, [1, 2], "industry");
+  turnOff(room, [1, 2], "residential"); // los distritos 1 y 2 ceden ambos civiles
+  // El distrito 3 se queda al 100%: 730 MW, la red aguanta.
+
+  const result = rules.resolveRound(room);
+  assert.equal(result.outcome, "STABLE");
+  assert.equal(result.totalMW, 210 + 80 + 80 + 360);
+
+  const industrial = result.teamResults[0];
+  const civiles = result.teamResults[1];
+  const parasito = result.teamResults[3];
+
+  // El free-rider cobra cortesía, no el bono de colaboración.
+  assert.equal(parasito.welfareDelta, rules.STABLE_WELFARE_BONUS_FREE_RIDER);
+  assert.equal(parasito.welfareDelta, 10);
+  assert.ok(
+    parasito.welfareDelta < rules.STABLE_WELFARE_BONUS,
+    "quien no apagó ningún sector nunca cobra el bono completo",
+  );
+  assert.equal(parasito.budgetDelta, 3000 - 500 - 300);
+
+  // Quien cedió al menos un sector sí cobra el bono completo.
+  assert.equal(
+    industrial.welfareDelta,
+    rules.STABLE_WELFARE_BONUS + rules.SECTOR_SPECS.industry.welfareOff,
+  );
+  assert.equal(industrial.welfareDelta, 40);
+  assert.equal(civiles.welfareDelta, rules.STABLE_WELFARE_BONUS - 60 - 150);
+  assert.equal(civiles.welfareDelta, -110);
+});
+
+test("ronda 2: apagar parte de la industria ya no alcanza (todas o mezcla con civiles)", () => {
   const room = makeRoom(4);
   rules.startRound(room, 2);
   assert.equal(room.capacity.maxMW, 936);
 
-  // 2 industrias apagadas no alcanzan
+  // 2 industrias apagadas: 1.140 MW sobre un techo de 936.
   turnOff(room, [0, 1], "industry");
-  assert.equal(rules.resolveRound(room).outcome, "BLACKOUT");
+  const dosFuera = rules.resolveRound(room);
+  assert.equal(dosFuera.outcome, "BLACKOUT");
+  assert.equal(dosFuera.cause, "ELECTRICIDAD");
+  assert.equal(dosFuera.totalMW, 2 * 210 + 2 * 360);
 
-  // 3 industrias apagadas sí (75% del panel)
+  // 3 industrias apagadas tampoco: 990 MW. La vieja solución dominante murió.
   const room2 = makeRoom(4);
   rules.startRound(room2, 2);
   turnOff(room2, [0, 1, 2], "industry");
-  const result = rules.resolveRound(room2);
-  assert.equal(result.outcome, "STABLE");
-  assert.equal(result.totalMW, 900);
-  assert.equal(result.totalGas, 1800);
+  const tresFuera = rules.resolveRound(room2);
+  assert.equal(tresFuera.outcome, "BLACKOUT");
+  assert.equal(tresFuera.totalMW, 3 * 210 + 360);
+
+  // Todas las industrias fuera: 840 MW / 1.720 m3.
+  const room3 = makeRoom(4);
+  rules.startRound(room3, 2);
+  turnOff(room3, [0, 1, 2, 3], "industry");
+  const todas = rules.resolveRound(room3);
+  assert.equal(todas.outcome, "STABLE");
+  assert.equal(todas.totalMW, 4 * 210);
+  assert.equal(todas.totalGas, 4 * 430);
+
+  // Solución mixta: 3 industrias + 1 residencial apagados también salva la red.
+  const room4 = makeRoom(4);
+  rules.startRound(room4, 2);
+  turnOff(room4, [0, 1, 2], "industry");
+  turnOff(room4, [3], "residential");
+  const mixta = rules.resolveRound(room4);
+  assert.equal(mixta.outcome, "STABLE");
+  assert.equal(mixta.totalMW, 3 * 210 + (150 + 80));
+  assert.equal(mixta.totalGas, 3 * 430 + (320 + 150));
 });
 
-test("ronda 3: la demanda residencial se duplica (+120 MW / +250 m3 por distrito)", () => {
+test("ronda 3: el residencial duplicado (+130 MW / +280 m3) exige recortar más", () => {
   const room = makeRoom(4);
   rules.startRound(room, 3);
 
-  assert.equal(room.demand.mw, 1920);
-  assert.equal(room.demand.gas, 4000);
+  assert.equal(room.demand.mw, 4 * (150 + 2 * 130 + 80));
+  assert.equal(room.demand.mw, 1960);
+  assert.equal(room.demand.gas, 4 * (320 + 2 * 280 + 150));
+  assert.equal(room.demand.gas, 4120);
   assert.equal(room.capacity.maxMW, 1440);
   assert.equal(room.capacity.maxGas, 3000);
 
+  // 3 industrias apagadas ya no salvan la red: 1.810 MW sobre 1.440.
   turnOff(room, [0, 1, 2], "industry");
-  const result = rules.resolveRound(room);
-  assert.equal(result.outcome, "STABLE");
-  assert.equal(result.totalMW, 1380);
-  assert.equal(result.totalGas, 2800);
+  const tresFuera = rules.resolveRound(room);
+  assert.equal(tresFuera.outcome, "BLACKOUT");
+  assert.equal(tresFuera.totalMW, 3 * 340 + 490);
+
+  // Con toda la industria apagada sí: 1.360 MW / 2.840 m3.
+  const room2 = makeRoom(4);
+  rules.startRound(room2, 3);
+  turnOff(room2, [0, 1, 2, 3], "industry");
+  const todas = rules.resolveRound(room2);
+  assert.equal(todas.outcome, "STABLE");
+  assert.equal(todas.totalMW, 4 * (2 * 130 + 80));
+  assert.equal(todas.totalMW, 1360);
+  assert.equal(todas.totalGas, 4 * (2 * 280 + 150));
+  assert.equal(todas.totalGas, 2840);
 });
 
-test("ronda 4: con todo apagado la red queda exactamente en el límite", () => {
+test("ronda 4: hay que apagar toda la industria y que alguien ceda el residencial", () => {
+  // Solo con la industria fuera no alcanza: 840 MW sobre un techo de 720.
   const room = makeRoom(4);
   rules.startRound(room, 4);
   turnOff(room, [0, 1, 2, 3], "industry");
 
-  const result = rules.resolveRound(room);
-  assert.equal(result.outcome, "STABLE");
-  assert.equal(result.totalMW, 720);
-  assert.equal(result.capacityMW, 720);
-  assert.equal(result.marginMW, 0);
-  assert.equal(result.totalGas, 1400);
+  const soloIndustria = rules.resolveRound(room);
+  assert.equal(soloIndustria.outcome, "BLACKOUT");
+  assert.equal(soloIndustria.cause, "AMBAS");
+  assert.equal(soloIndustria.totalMW, 4 * (130 + 80));
+  assert.equal(soloIndustria.totalGas, 4 * (280 + 150));
 
-  // Un solo distrito que vuelva a encender su industria provoca el colapso
+  // Industria fuera + 1 distrito cediendo el residencial: 710 MW, 10 de margen.
   const room2 = makeRoom(4);
   rules.startRound(room2, 4);
   turnOff(room2, [0, 1, 2, 3], "industry");
-  Object.values(room2.teams)[0].sectors.industry = true;
-  rules.recomputeDerived(room2);
-  const second = rules.resolveRound(room2);
+  turnOff(room2, [0], "residential");
+  const result = rules.resolveRound(room2);
+  assert.equal(result.outcome, "STABLE");
+  assert.equal(result.totalMW, 3 * (130 + 80) + 80);
+  assert.equal(result.totalMW, 710);
+  assert.equal(result.capacityMW, 720);
+  assert.equal(result.marginMW, 10);
+  assert.equal(result.totalGas, 3 * (280 + 150) + 150);
+  assert.equal(result.totalGas, 1440);
+
+  // Y un solo distrito que reencienda la industria tumba la red otra vez.
+  const room3 = makeRoom(4);
+  rules.startRound(room3, 4);
+  turnOff(room3, [0, 1, 2, 3], "industry");
+  turnOff(room3, [0], "residential");
+  Object.values(room3.teams)[1].sectors.industry = true;
+  rules.recomputeDerived(room3);
+  const second = rules.resolveRound(room3);
   assert.equal(second.outcome, "BLACKOUT");
-  assert.equal(second.cause, "AMBAS"); // el MW y el gas se salen del techo a la vez
+  assert.equal(second.cause, "AMBAS");
+});
+
+
+test("combinaciones a ciegas: sin coordinar los switches la ronda se cae (>=6 de 8)", () => {
+  /**
+   * Un solo distrito mueve sus tres palancas (8 combinaciones) mientras las
+   * otras mesas del panel se quedan al 100%. Es la jugada "a ciegas": nadie
+   * habla, nadie coordina. La red debe caerse en casi todas las combinaciones.
+   */
+  const combos = [];
+  for (let mask = 0; mask < 8; mask += 1) {
+    combos.push({ industry: !!(mask & 1), residential: !!(mask & 2), critical: !!(mask & 4) });
+  }
+
+  /** Corte mínimo coordinado que salva cada ronda (verificado en los tests de ronda). */
+  const COORDINADO = {
+    2: { industry: [0, 1, 2, 3], residential: [] },
+    3: { industry: [0, 1, 2, 3], residential: [] },
+    4: { industry: [0, 1, 2, 3], residential: [0] },
+  };
+
+  function colapsosSinCoordinar(round, panel) {
+    let colapsos = 0;
+    for (const combo of combos) {
+      const room = makeRoom(panel);
+      rules.startRound(room, round);
+      const teams = Object.values(room.teams);
+      teams.forEach((team, index) => {
+        team.sectors =
+          index === 0
+            ? { ...combo }
+            : { industry: true, residential: true, critical: true };
+      });
+      rules.recomputeDerived(room);
+      if (rules.resolveRound(room).outcome === "BLACKOUT") colapsos += 1;
+    }
+    return colapsos;
+  }
+
+  for (const round of [2, 3, 4]) {
+    const colapsos = colapsosSinCoordinar(round, 4);
+    assert.ok(
+      colapsos >= 6,
+      `ronda ${round}: solo ${colapsos}/8 combinaciones a ciegas colapsan (se exigen 6)`,
+    );
+
+    // La misma ronda sí se salva cuando el panel entero coordina el corte.
+    const room = makeRoom(4);
+    rules.startRound(room, round);
+    turnOff(room, COORDINADO[round].industry, "industry");
+    turnOff(room, COORDINADO[round].residential, "residential");
+    assert.equal(
+      rules.resolveRound(room).outcome,
+      "STABLE",
+      `ronda ${round}: existe una solución coordinada (el panel no es irresoluble)`,
+    );
+  }
+
+  // La cuota de un distrito no se diluye al reducir mesas: la capacidad regional
+  // escala con el panel, así que en ronda 2 un solo distrito tampoco salva nada
+  // ni con 3 mesas ni con 4. La improvisación individual nunca basta.
+  assert.equal(colapsosSinCoordinar(2, 3), 8);
+  assert.equal(colapsosSinCoordinar(2, 4), 8);
 });
 
 test("dos apagones provocan fallo regional irreversible sin ganadores", () => {
@@ -535,10 +786,16 @@ test("la economía de los incidentes se cobra en la resolución", () => {
   const team = result.teamResults[0];
 
   assert.equal(result.outcome, "BLACKOUT");
-  assert.equal(team.welfareDelta, rules.BLACKOUT_WELFARE_HIT);
+  // Nadie cedió: base -150 + sobreconsumo industrial -250 + carga civil -50.
+  assert.equal(
+    team.welfareDelta,
+    rules.BLACKOUT_WELFARE_HIT + rules.BLACKOUT_HOG_MALUS + rules.BLACKOUT_RESIDENTIAL_MALUS,
+  );
+  assert.equal(team.welfareDelta, -450);
   // Apagón: ingresos industriales anulados ($0) + -500 red residencial + -300 red
-  // crítica + -400 del incidente + -400 extra del incidente por apagón.
-  assert.equal(team.budgetDelta, -1600);
+  // crítica + multa -1.500 del sobreconsumo + -400 del incidente + -400 extra.
+  assert.equal(team.budgetDelta, -500 - 300 + rules.BLACKOUT_HOG_FINE - 400 - 400);
+  assert.equal(team.budgetDelta, -3100);
 
   // SUBSIDIO: +$800 y sin golpe extra (red estable).
   const room2 = makeRoom(4, { incidents: true, seed: 99 });
@@ -553,7 +810,12 @@ test("la economía de los incidentes se cobra en la resolución", () => {
 
   assert.equal(stable.outcome, "STABLE");
   const stableTeam = stable.teamResults[0];
-  assert.equal(stableTeam.welfareDelta, rules.STABLE_WELFARE_BONUS);
+  // Bono completo por colaborar (apagó la industria) menos el paro local de -60.
+  assert.equal(
+    stableTeam.welfareDelta,
+    rules.STABLE_WELFARE_BONUS + rules.SECTOR_SPECS.industry.welfareOff,
+  );
+  assert.equal(stableTeam.welfareDelta, 40);
   // -1.000 paro + -500 + -300 + 800 del subsidio
   assert.equal(stableTeam.budgetDelta, -1000);
   assert.equal(stable.incidents.length, 2);
