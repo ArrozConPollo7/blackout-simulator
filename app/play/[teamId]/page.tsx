@@ -371,9 +371,9 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
                 icono="bolt"
                 etiqueta="Elec"
                 color="text-accent-electricidad"
-                valor={team ? `${formatNumber(team.electricidad, 1)} kWh` : '—'}
+                valor={team ? `${formatNumber(team.electricidad, team.electricidad >= 100 ? 0 : 1)} kWh` : '—'}
                 numero={team?.electricidad}
-                formato={(valor) => `${formatNumber(valor, 1)} kWh`}
+                formato={(valor) => `${formatNumber(valor, valor >= 100 ? 0 : 1)} kWh`}
               />
               <Badge
                 icono="local_fire_department"

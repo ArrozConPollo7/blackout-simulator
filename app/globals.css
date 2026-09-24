@@ -513,3 +513,27 @@
 .anim-icon-kick {
   animation: eec-icon-kick 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
+
+/* --- Banner de fase como franja inferior (no tapa el progreso de ronda) --- */
+
+@keyframes eec-banner-up-in {
+  from { opacity: 0; transform: translate3d(0, 26px, 0) scaleY(0.72); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scaleY(1); }
+}
+@keyframes eec-banner-up-out {
+  from { opacity: 1; transform: translate3d(0, 0, 0) scaleY(1); }
+  to { opacity: 0; transform: translate3d(0, 18px, 0) scaleY(0.9); }
+}
+.anim-banner-up-in {
+  animation: eec-banner-up-in 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.anim-banner-up-out {
+  animation: eec-banner-up-out 0.32s ease-in both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-banner-up-in,
+  .anim-banner-up-out {
+    animation: none;
+  }
+}

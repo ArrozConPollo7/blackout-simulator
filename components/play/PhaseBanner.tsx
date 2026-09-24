@@ -4,9 +4,15 @@
  * Banner de toma de fase: ~1,5 s a todo lo ancho ('RONDA 2 · HORA DE DECIDIR',
  * '¡CRISIS TARIFARIA!'). Nunca bloquea el toque (`pointer-events-none`) y solo se
  * muestra cuando la fase CAMBIA: en la primera carga no hay nada que anunciar.
+ *
+ * Va por portal a `document.body`: dentro del árbol de la página cae bajo ancestros con
+ * `transform` (animaciones de entrada), y entonces un `position: fixed` se ancla al
+ * documento en vez de a la pantalla — la franja acababa tapando el progreso de ronda o
+ * directamente fuera de vista en páginas largas.
  */
 
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import type { Phase } from '@/types/game';
 
@@ -56,6 +62,11 @@ function PhaseBanner({ phase }: { phase: Phase | undefined }) {
   const previa = useRef<Phase | undefined>(undefined);
   const [visible, setVisible] = useState<Phase | null>(null);
   const [saliendo, setSaliendo] = useState(false);
+  const [montado, setMontado] = useState(false);
+
+  useEffect(() => {
+    setMontado(true);
+  }, []);
 
   useEffect(() => {
     if (!phase) return;
@@ -76,18 +87,19 @@ function PhaseBanner({ phase }: { phase: Phase | undefined }) {
     };
   }, [phase]);
 
-  if (!visible) return null;
+  if (!visible || !montado) return null;
   const texto = BANNERS[visible];
 
-  return (
+  return createPortal(
     <div
-      className="pointer-events-none fixed left-0 right-0 top-[86px] z-[45] flex justify-center px-0"
+      className="pointer-events-none fixed left-0 right-0 z-[45] flex justify-center px-0"
+      style={{ bottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))' }}
       aria-hidden
     >
       <div
-        className={`relative w-full max-w-md overflow-hidden border-y shadow-xl ${
+        className={`relative w-full max-w-md overflow-hidden border-y rounded-lg shadow-xl ${
           TONOS[texto.tono]
-        } ${saliendo ? 'anim-banner-out' : 'anim-banner-in'}`}
+        } ${saliendo ? 'anim-banner-up-out' : 'anim-banner-up-in'}`}
       >
         <span
           className="anim-banner-sheen pointer-events-none absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-white/25 to-transparent"
@@ -103,9 +115,10 @@ function PhaseBanner({ phase }: { phase: Phase | undefined }) {
             {texto.detalle}
           </span>
         </div>
-      </div>
-    </div>
-  );
+        </div>
+      </div>,
+      document.body,
+    );
 }
 
 export default React.memo(PhaseBanner);
