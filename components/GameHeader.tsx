@@ -1,41 +1,53 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React from 'react';
+import type { Phase } from '@/types/game';
+import { formatRemaining, phaseLabel, realtimeIcon, realtimeLabel } from '@/lib/ui';
+import { useRemainingMs, type RealtimeStatus } from '@/lib/useGameState';
 
 interface GameHeaderProps {
   phaseName?: string;
   phaseCode?: string;
-  timerString?: string;
+  phase?: Phase;
+  /** Marca absoluta de fin de fase: el cronómetro se deriva de aquí, nunca de un contador local. */
+  timerEndsAt?: string | null;
+  clockSkewMs?: number;
   isCrisis?: boolean;
+  realtime?: RealtimeStatus;
+  showControls?: boolean;
+  busy?: boolean;
+  nextPhaseLabel?: string | null;
   onTriggerCrisis?: () => void;
-  onPause?: () => void;
+  onAdvancePhase?: () => void;
 }
 
+/**
+ * Header persistente del Host. El tiempo restante se recalcula contra `timerEndsAt`
+ * en cada tick (Fase 2.3): si el reloj del cliente está desfasado, se corrige con
+ * `clockSkewMs` medido contra el reloj del Worker.
+ */
 export default function GameHeader({
-  phaseName = 'En Juego — Despacho y Telemetría',
+  phaseName = 'En Juego — Telemetría de Red',
   phaseCode = 'FASE DE OPERACIÓN',
-  timerString = '03:42',
+  phase,
+  timerEndsAt = null,
+  clockSkewMs = 0,
   isCrisis = false,
+  realtime = 'desactivado',
+  showControls = true,
+  busy = false,
+  nextPhaseLabel = null,
   onTriggerCrisis,
-  onPause,
+  onAdvancePhase,
 }: GameHeaderProps) {
-  const [seconds, setSeconds] = useState(3 * 60 + 42);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setSeconds((prev) => (prev > 0 ? prev - 1 : 0));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  const formattedTime = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  const remaining = useRemainingMs(timerEndsAt, phase, clockSkewMs);
+  const formattedTime = formatRemaining(remaining);
+  const sinCronometro = remaining === null;
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 bg-bg-surface border-b border-border-subtle shadow-lg">
       <div className="h-20 w-full px-margin-desktop flex items-center justify-between">
-        {/* Title & System Status */}
+        {/* Título y estado del sistema */}
         <div className="flex items-center gap-space-md">
           <div className="flex items-center gap-space-xs">
             <div
@@ -52,10 +64,10 @@ export default function GameHeader({
 
           <div className="hidden lg:flex items-center gap-space-xs">
             <span className="font-label-sm text-label-sm text-text-secondary uppercase tracking-widest">
-              SCADA CORE
+              FASE ACTUAL
             </span>
             <div className="px-2 py-0.5 rounded bg-surface border border-border-subtle font-label-md text-label-md text-accent-presupuesto tracking-wide">
-              CENTRO DE CONTROL HOST
+              {phaseName}
             </div>
           </div>
 
@@ -70,9 +82,8 @@ export default function GameHeader({
           </div>
         </div>
 
-        {/* Timer & Host Control Actuators */}
+        {/* Cronómetro y controles del Host */}
         <div className="flex items-center gap-space-md">
-          {/* SCADA Countdown Module */}
           <div
             className={`flex items-center gap-space-xs px-3.5 py-1.5 rounded-lg border shadow-inner ${
               isCrisis
@@ -83,7 +94,7 @@ export default function GameHeader({
             <span className="material-symbols-outlined text-[20px]">timer</span>
             <div className="flex flex-col">
               <span className="font-label-sm text-[10px] text-text-secondary uppercase leading-none">
-                TIEMPO RESTANTE
+                {sinCronometro ? 'SIN CRONÓMETRO' : 'TIEMPO RESTANTE'}
               </span>
               <span
                 id="countdown"
@@ -94,20 +105,31 @@ export default function GameHeader({
             </div>
           </div>
 
-          {/* Quick Simulation Actions */}
           <div className="hidden md:flex items-center gap-2">
-            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-surface rounded-lg font-label-sm text-label-sm text-text-secondary border border-border-subtle">
-              <span className="material-symbols-outlined text-[16px] text-accent-eficiencia">sync</span>
-              <span>SINCRONÍA HOST: OK</span>
+            <div
+              className={`flex items-center gap-1.5 px-3 py-1.5 bg-surface rounded-lg font-label-sm text-label-sm border border-border-subtle ${
+                realtime === 'suscrito'
+                  ? 'text-text-secondary'
+                  : realtime === 'error'
+                    ? 'text-accent-gas'
+                    : 'text-text-secondary'
+              }`}
+              title={phaseLabel(phase)}
+            >
+              <span className="material-symbols-outlined text-[16px] text-accent-eficiencia">
+                {realtimeIcon(realtime)}
+              </span>
+              <span>{realtimeLabel(realtime)}</span>
             </div>
 
-            {onTriggerCrisis && (
+            {showControls && onTriggerCrisis && (
               <button
                 type="button"
                 onClick={onTriggerCrisis}
-                className={`h-10 px-3.5 rounded-lg font-label-md text-label-md font-bold uppercase tracking-wider transition-all flex items-center gap-2 shadow-sm active:scale-95 ${
+                disabled={busy || isCrisis}
+                className={`h-10 px-3.5 rounded-lg font-label-md text-label-md font-bold uppercase tracking-wider transition-all flex items-center gap-2 shadow-sm active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed ${
                   isCrisis
-                    ? 'bg-accent-crisis text-white hover:bg-opacity-90'
+                    ? 'bg-accent-crisis text-white'
                     : 'bg-primary-container text-on-primary-container hover:opacity-90'
                 }`}
               >
@@ -118,14 +140,15 @@ export default function GameHeader({
               </button>
             )}
 
-            {onPause && (
+            {showControls && onAdvancePhase && nextPhaseLabel && (
               <button
                 type="button"
-                onClick={onPause}
-                className="h-10 px-3.5 rounded-lg bg-surface-container-high text-text-primary font-label-md text-label-md font-bold uppercase tracking-wider transition-colors hover:bg-surface-bright active:scale-95 flex items-center gap-2 shadow-sm border border-border-subtle"
+                onClick={onAdvancePhase}
+                disabled={busy}
+                className="h-10 px-3.5 rounded-lg bg-surface-container-high text-text-primary font-label-md text-label-md font-bold uppercase tracking-wider transition-colors hover:bg-surface-bright active:scale-95 flex items-center gap-2 shadow-sm border border-border-subtle disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                <span className="material-symbols-outlined text-[18px]">pause</span>
-                <span>PAUSAR</span>
+                <span className="material-symbols-outlined text-[18px]">skip_next</span>
+                <span>{nextPhaseLabel}</span>
               </button>
             )}
           </div>

@@ -10,7 +10,8 @@
     "test": "node --test tests/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p worker/tsconfig.json --noEmit",
     "sim": "node scripts/simulate-game.ts",
-    "sim:mixed": "node scripts/simulate-game.ts --mixed"
+    "sim:mixed": "node scripts/simulate-game.ts --mixed",
+    "dev:api": "node scripts/dev-api.ts"
   },
   "dependencies": {
     "@react-three/drei": "^9.122.0",
