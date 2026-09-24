@@ -318,7 +318,11 @@ describe('calculateFinalResults', () => {
     const lider = results.ranking[0];
     assert.equal(lider.ahorroElectricidadKwh, 28);
     assert.equal(lider.ahorroGasM3, 55);
-    assert.equal(lider.puntos, 804); // 80 * 10 + 82000/20000
+    assert.equal(
+      lider.puntos,
+      924,
+    ); // 80*10 (eficiencia) + 28 kWh (consumo) + 55 m³ (consumo) + 82000/2000 (economía)
+    assert.deepEqual(lider.desglose, { eficiencia: 800, consumo: 83, economia: 41, total: 924 });
   });
 
   it('no muta el estado de la partida', () => {

@@ -43,6 +43,19 @@ Regla clave: **ningún cliente calcula su propio consumo, costo o eficiencia**. 
 
 Todos los equipos parten del mismo tipo de situación pero toman decisiones distintas; al final se comparan resultados. No gana quien menos consume a secas — gana quien equilibra tres objetivos a la vez: **economía, consumo y eficiencia**.
 
+El puntaje final (`puntosFor` en `engine/results.ts`) es la suma de los tres, y así se explica en pantalla:
+
+| Eje | Cómo se mide | Peso máximo |
+|---|---|---|
+| Eficiencia | 10 puntos por punto de eficiencia (confort/servicio mantenido por unidad de consumo) | 1.000 |
+| Consumo | 1 punto por kWh y 1 por m³ de gas ahorrados frente a la referencia del caso | 200 (100 + 100) |
+| Economía | 1 punto por cada $2.000 de presupuesto restante (inversiones y facturas) | 50 |
+
+La eficiencia es el eje que decide; consumo y economía pesan juntos hasta un 20%, de modo que
+"dejar de consumir" y "gastar de más" no son gratis, pero ninguna de las dos puede dar la vuelta
+a una diferencia grande de eficiencia. El ranking ordena por ese puntaje (antes ordenaba solo por
+eficiencia, con el presupuesto como desempate: el consumo no contaba en absoluto).
+
 ### Roles
 
 - **Host:** pantalla principal (proyector/TV). Muestra el estado agregado, dispara el evento de crisis, controla el timer.
@@ -77,7 +90,10 @@ El equipo hace clic en objetos de su vivienda para investigarlos. Cada clic reve
 > **❄️ Aire acondicionado**
 > Potencia: 1.500 W · Uso diario: 8 horas · Consumo aproximado: 12 kWh/día
 
-Después de ver la ficha, el equipo decide si ese objeto "es un problema" o no — esto alimenta el resumen educativo final, no afecta el puntaje directamente.
+Después de ver la ficha, el equipo decide qué hacer con ese objeto (completa / parcial / ninguna).
+Esa decisión **sí mueve dos de los tres ejes del puntaje**: baja (o no) el consumo y cuesta (o no)
+presupuesto; lo que no toca es la eficiencia, que se decide en la Ronda 2. Un equipo que no
+interviene nada conserva el dinero pero no gana puntos de consumo.
 
 ### Ronda 2 — Decidir
 

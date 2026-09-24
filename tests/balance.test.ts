@@ -96,7 +96,7 @@ describe('balanceo de la partida', () => {
 
   const kpi = (e: Estrategia) => finales[e].teams[0];
 
-  it('la estrategia equilibrada gana el ranking por eficiencia', () => {
+  it('la estrategia equilibrada gana el ranking', () => {
     const equipos = { derroche: kpi('derroche'), equilibrado: kpi('equilibrado'), extremo: kpi('extremo') };
     const ranking = calculateFinalResults({
       ...finales.equilibrado,
@@ -111,9 +111,34 @@ describe('balanceo de la partida', () => {
     assert.deepEqual(orden, ['equilibrado', 'extremo', 'derroche']);
     assert.equal(ranking[0].rank, 1);
     assert.ok(
-      ranking.every((r, i) => i === 0 || ranking[i - 1].team.eficiencia >= r.team.eficiencia),
-      'el ranking debe venir ordenado por eficiencia',
+      ranking.every((r, i) => i === 0 || ranking[i - 1].puntos >= r.puntos),
+      'el ranking debe venir ordenado por puntaje (eficiencia + consumo + economía)',
     );
+  });
+
+  it('a igual eficiencia, gana quien consumió menos (el consumo sí puntúa)', () => {
+    const base = initialTeamState({ id: 'x', name: 'x', color: '#000' });
+    const derrochador = { ...base, id: 'a', eficiencia: 70, electricidad: 90, gas: 80, presupuesto: 70000 };
+    const austero = { ...base, id: 'b', eficiencia: 70, electricidad: 55, gas: 40, presupuesto: 80000 };
+    const ranking = calculateFinalResults({
+      ...finales.equilibrado,
+      teams: [derrochador, austero],
+    }).ranking;
+    assert.deepEqual(ranking.map((r) => r.team.id), ['b', 'a']);
+    assert.ok(ranking[0].desglose.consumo > ranking[1].desglose.consumo);
+  });
+
+  it('ni consumir menos ni gastar menos dan la vuelta a una diferencia grande de eficiencia', () => {
+    const base = initialTeamState({ id: 'x', name: 'x', color: '#000' });
+    // La extremista consume 27 kWh y 35 m³ menos y tiene $25.000 más, pero 30 puntos menos
+    // de eficiencia: el mensaje del juego ("no gana quien menos consume a secas") se sostiene.
+    const extremo = { ...base, id: 'e', eficiencia: 45, electricidad: 35, gas: 20, presupuesto: 95000 };
+    const equilibrado = { ...base, id: 'q', eficiencia: 75, electricidad: 62, gas: 55, presupuesto: 70000 };
+    const ranking = calculateFinalResults({
+      ...finales.equilibrado,
+      teams: [extremo, equilibrado],
+    }).ranking;
+    assert.equal(ranking[0].team.id, 'q');
   });
 
   it('la extremista ahorra mas dinero que la ganadora y aun asi pierde', () => {

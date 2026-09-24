@@ -43,7 +43,7 @@ engine/                    Motor puro (sin UI ni red)
   state.ts                 initialTeamState, advancePhase (máquina de fases + timer absoluto)
   decisions.ts             applyDecision, describeEffect (microcopy con números reales)
   crisis.ts                triggerCrisis (+30% sobre el consumo acumulado, idempotente)
-  results.ts               calculateFinalResults (eficiencia; desempate por presupuesto)
+  results.ts               calculateFinalResults (puntaje: eficiencia + consumo + economía)
 worker/                    Cloudflare Worker: la única fuente de verdad
   src/index.ts             Router: /game/start, /game/:id/{join,teams,state,decision,crisis,phase}, /host/verify, /health
   src/game-service.ts      Casos de uso (validación, aplicación, persistencia)

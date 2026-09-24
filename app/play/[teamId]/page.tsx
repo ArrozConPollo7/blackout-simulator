@@ -1141,6 +1141,23 @@ function Resultados({
             />
           )}
         </div>
+        {fila?.desglose && (
+          <p className="font-body-sm text-body-sm text-text-secondary m-0">
+            El puntaje suma los tres objetivos:{' '}
+            <strong className="text-accent-eficiencia">
+              eficiencia {Math.round(fila.desglose.eficiencia)}
+            </strong>{' '}
+            +{' '}
+            <strong className="text-accent-electricidad">
+              consumo {Math.round(fila.desglose.consumo)}
+            </strong>{' '}
+            +{' '}
+            <strong className="text-accent-presupuesto">
+              economía {Math.round(fila.desglose.economia)}
+            </strong>
+            .
+          </p>
+        )}
       </section>
 
       <section className="rounded-xl bg-surface-container border border-border-subtle p-4 flex flex-col gap-3 anim-rise">
