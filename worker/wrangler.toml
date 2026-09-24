@@ -1,0 +1,13 @@
+name = "energia-en-crisis-api"
+main = "src/index.ts"
+compatibility_date = "2026-09-24"
+compatibility_flags = ["nodejs_compat"]
+
+# La URL del proyecto es publica (tambien viaja al navegador), no es un secreto.
+[vars]
+SUPABASE_URL = "https://tbwtphcydwhpeqmdfmlo.supabase.co"
+ALLOWED_ORIGINS = "*"
+
+# Secretos (nunca en este archivo):
+#   wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+#   wrangler secret put HOST_TOKEN

@@ -1,0 +1,19 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "target": "es2022",
+    "lib": ["esnext"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": ["@cloudflare/workers-types"],
+    "noEmit": true,
+    "declaration": false,
+    "isolatedModules": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "../types/**/*.ts",
+    "../content/**/*.ts",
+    "../engine/**/*.ts"
+  ]
+}

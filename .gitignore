@@ -38,3 +38,7 @@ next-env.d.ts
 
 .hermes/
 repomap.md
+
+# cloudflare worker local vars
+.dev.vars
+worker/.dev.vars

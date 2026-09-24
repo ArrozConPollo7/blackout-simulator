@@ -1,0 +1,11 @@
+# Copia este archivo a worker/.dev.vars (esta ignorado por git) para `wrangler dev`.
+# Los valores reales de los secretos no se versionan.
+
+SUPABASE_URL=https://tbwtphcydwhpeqmdfmlo.supabase.co
+# Clave de servicio del proyecto (Dashboard -> Settings -> API). El Worker es el unico que escribe.
+SUPABASE_SERVICE_ROLE_KEY=pega-aqui-la-service-role
+# Token compartido con la vista Host (cabecera x-host-token) y con NEXT_PUBLIC_HOST_TOKEN.
+HOST_TOKEN=cambia-este-token
+# Solo para desarrollo local: permite acciones de host sin token.
+ALLOW_INSECURE_HOST=false
+ALLOWED_ORIGINS=*

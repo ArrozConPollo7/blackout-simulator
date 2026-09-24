@@ -1,4 +1,13 @@
-import { GameState, TeamState, Appliance, DecisionOption } from '@/types/game';
+import { GameState, TeamState, Appliance, DecisionCardOption } from '@/types/game';
+
+/**
+ * Datos MOCK del cascarón visual (Fase 0).
+ *
+ * Desde la Fase 2 la aplicación real NO usa estos datos: el Host y el Player piden el
+ * estado completo al Worker (`GET /game/:id/state`) y se suscriben a Supabase Realtime.
+ * Este archivo queda como fallback para desarrollo aislado de la UI (por ejemplo,
+ * Storybook o una vista sin partida creada) y para el DemoNav del cascarón.
+ */
 
 export const mockTeams: TeamState[] = [
   {
@@ -74,17 +83,17 @@ export const mockAppliances: Appliance[] = [
   {
     id: 'ac',
     name: 'Aire Acondicionado Split',
-    category: 'Climatizaci�n',
+    category: 'Climatización',
     icon: 'mode_fan',
     consumptionText: '1,800 W / h',
     costText: '$14,400 / ciclo',
-    stateText: 'Encendido a 21�C continuo',
+    stateText: 'Encendido a 21 °C continuo',
     isHighImpact: true,
   },
   {
     id: 'refrigerator',
     name: 'Nevera No-Frost',
-    category: 'Refrigeraci�n',
+    category: 'Refrigeración',
     icon: 'kitchen',
     consumptionText: '350 W / h',
     costText: '$8,200 / ciclo',
@@ -93,7 +102,7 @@ export const mockAppliances: Appliance[] = [
   },
   {
     id: 'computer',
-    name: 'Estaci�n de C�mputo',
+    name: 'Estación de Cómputo',
     category: 'Equipamiento',
     icon: 'computer',
     consumptionText: '450 W / h',
@@ -104,19 +113,19 @@ export const mockAppliances: Appliance[] = [
   {
     id: 'lighting',
     name: 'Alumbrado Incandescente',
-    category: 'Iluminaci�n',
+    category: 'Iluminación',
     icon: 'lightbulb',
     consumptionText: '600 W / h',
     costText: '$5,100 / ciclo',
-    stateText: '6 focos hal�genos activos',
+    stateText: '6 focos halógenos activos',
     isHighImpact: true,
   },
   {
     id: 'gas-heater',
     name: 'Calentador de Agua Gas',
-    category: 'T�rmico',
+    category: 'Térmico',
     icon: 'mode_heat',
-    consumptionText: '0.8 m� / h',
+    consumptionText: '0,8 m³ / h',
     costText: '$3,800 / ciclo',
     stateText: 'Piloto continuo + flujo medio',
     isHighImpact: false,
@@ -124,37 +133,37 @@ export const mockAppliances: Appliance[] = [
   {
     id: 'stove',
     name: 'Estufa y Horno a Gas',
-    category: 'Cocci�n',
+    category: 'Cocción',
     icon: 'soup_kitchen',
-    consumptionText: '1.2 m� / h',
+    consumptionText: '1,2 m³ / h',
     costText: '$4,200 / ciclo',
     stateText: '2 quemadores en uso',
     isHighImpact: false,
   }
 ];
 
-export const mockDecisions: DecisionOption[] = [
+export const mockDecisions: DecisionCardOption[] = [
   {
     id: 'opt_a',
-    title: 'Aire Continuo a 19�C',
-    description: 'M�xima potencia de refrigeraci�n durante todo el periodo de calor.',
+    title: 'Aire Continuo a 19 °C',
+    description: 'Máxima potencia de refrigeración durante todo el periodo de calor.',
     impactElectricidad: '+85 kWh',
     impactPresupuesto: '-$18,000',
-    impactComfort: 'M�ximo',
+    impactComfort: 'Máximo',
     isHighRisk: true,
   },
   {
     id: 'opt_b',
-    title: 'Climatizaci�n Eficiente a 24�C + Ventilaci�n',
+    title: 'Climatización Eficiente a 24 °C + Ventilación',
     description: 'Ajuste de termostato a temperatura de confort sostenible con soporte de ventilador.',
     impactElectricidad: '+28 kWh',
     impactPresupuesto: '-$5,200',
-    impactComfort: '�ptimo',
+    impactComfort: 'Óptimo',
     recommended: true,
   },
   {
     id: 'opt_c',
-    title: 'Apagar A/C y Ventilaci�n Natural Pasiva',
+    title: 'Apagar A/C y Ventilación Natural Pasiva',
     description: 'Bajar persianas, ventilar por corrientes cruzadas y usar solo ventilador de bajo consumo.',
     impactElectricidad: '+6 kWh',
     impactPresupuesto: '-$1,100',
@@ -162,11 +171,11 @@ export const mockDecisions: DecisionOption[] = [
   }
 ];
 
-export const mockCrisisDecisions: DecisionOption[] = [
+export const mockCrisisDecisions: DecisionCardOption[] = [
   {
     id: 'crisis_opt_1',
-    title: 'Desconexi�n de Emergencia de No Esenciales',
-    description: 'Apagado inmediato de climatizaci�n y equipos de alto amperaje para estabilizar la l�nea.',
+    title: 'Desconexión de Emergencia de No Esenciales',
+    description: 'Apagado inmediato de climatización y equipos de alto amperaje para estabilizar la línea.',
     impactElectricidad: '-60% Inmediato',
     impactPresupuesto: 'Conserva presupuesto',
     impactComfort: 'Servicios esenciales activos',
@@ -174,19 +183,19 @@ export const mockCrisisDecisions: DecisionOption[] = [
   },
   {
     id: 'crisis_opt_2',
-    title: 'Reducci�n al M�nimo Operativo (Modo Supervivencia)',
-    description: 'Ajuste del consumo general al 50% con desconexi�n progresiva.',
+    title: 'Reducción al Mínimo Operativo (Modo Supervivencia)',
+    description: 'Ajuste del consumo general al 50% con desconexión progresiva.',
     impactElectricidad: '-30% Inmediato',
     impactPresupuesto: 'Sobrecosto moderado',
     impactComfort: 'Confort parcial',
   },
   {
     id: 'crisis_opt_3',
-    title: 'Mantener Operaci�n Habitual (No Intervenir)',
-    description: 'Asumir el riesgo de apag�n zonal y multas por sobreconsumo en horario pico.',
-    impactElectricidad: 'Sin reducci�n',
-    impactPresupuesto: 'Penalizaci�n 300% tarifa',
-    impactComfort: 'Riesgo cr�tico de ca�da',
+    title: 'Mantener Operación Habitual (No Intervenir)',
+    description: 'Asumir el riesgo de apagón zonal y multas por sobreconsumo en horario pico.',
+    impactElectricidad: 'Sin reducción',
+    impactPresupuesto: 'Penalización 300% tarifa',
+    impactComfort: 'Riesgo crítico de caída',
     isHighRisk: true,
   }
 ];

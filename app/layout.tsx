@@ -3,8 +3,9 @@ import './globals.css';
 import DemoNav from '@/components/DemoNav';
 
 export const metadata: Metadata = {
-  title: 'Energ�a en Crisis � SCADA Telemetry & Grid Resilience',
-  description: 'Simulador y centro de telemetr�a de resiliencia energ�tica para control de red y contingencias.',
+  title: 'Energía en Crisis · SCADA Telemetry & Grid Resilience',
+  description:
+    'Simulador y centro de telemetría de resiliencia energética para control de red y contingencias.',
 };
 
 export default function RootLayout({
@@ -15,6 +16,8 @@ export default function RootLayout({
   return (
     <html lang="es" className="dark">
       <head>
+        {/* Codificación explícita: el cascarón mostraba tildes y ñ corruptas al no fijarla. */}
+        <meta charSet="utf-8" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link

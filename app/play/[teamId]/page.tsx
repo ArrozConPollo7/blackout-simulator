@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { mockTeams, mockAppliances, mockDecisions, mockCrisisDecisions } from '@/mock/gameState';
-import { Appliance, DecisionOption } from '@/types/game';
+import { Appliance, DecisionCardOption } from '@/types/game';
 
 type PlayerPhase = 'investigar' | 'decidir' | 'crisis' | 'resultados';
 
