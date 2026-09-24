@@ -146,6 +146,36 @@ describe('applyDecision', () => {
     assert.equal(broke.presupuesto, -8500);
   });
 
+  it('descuenta el ahorro ya capturado en la Ronda 1 (el aparato vuelve a su consumo real)', () => {
+    const base = team();
+    const trasR1 = applyDecision(base, option('r1:aire-acondicionado:completa')); // -6 kWh
+    assert.equal(trasR1.electricidad, base.electricidad - 6);
+
+    // Sin descuento, elegir en R2 "8 h a 18 °C" salía gratis: el ahorro se conservaba.
+    const gratis = applyDecision(trasR1, option('r2:calor:a'));
+    assert.equal(gratis.electricidad, trasR1.electricidad);
+
+    // Con el descuento, el aparato vuelve a su consumo real (el de la referencia).
+    const real = applyDecision(trasR1, option('r2:calor:a'), {
+      descontarAhorro: { electricidad: -6 },
+    });
+    assert.equal(real.electricidad, base.electricidad);
+    assert.ok(real.electricidad > gratis.electricidad, 'desperdiciar tiene que costar');
+
+    // Y si mantiene el arreglo, tampoco se cuenta dos veces el ahorro.
+    const mantiene = applyDecision(trasR1, option('r2:calor:b'), {
+      descontarAhorro: { electricidad: -6 },
+    });
+    assert.equal(mantiene.electricidad, base.electricidad - 6);
+  });
+
+  it('el peso de eficiencia escala el delta completo (casos con menos situaciones)', () => {
+    const sinPeso = applyDecision(team(), option('r2:calor:b'));
+    const conPeso = applyDecision(team(), option('r2:calor:b'), { pesoEficiencia: 2 });
+    const delta = sinPeso.eficiencia - team().eficiencia;
+    assert.equal(conPeso.eficiencia - team().eficiencia, delta * 2);
+  });
+
   it('la eficiencia se mueve con las decisiones de confort, no con el ahorro extremo', () => {
     const balanced = applyDecision(team(), option('r2:calor:b'));
     const extreme = applyDecision(team(), option('r2:calor:c'));

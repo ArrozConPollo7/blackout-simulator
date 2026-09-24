@@ -27,7 +27,9 @@ import {
   findOptionInScenario,
   resolveScenarioForOption,
   scenarioKeyOfOption,
+  pesoEficienciaR2,
 } from '../../content/decisions.ts';
+import type { DecisionScenario } from '../../content/decisions.ts';
 import { canTransition, nextPhaseOf, roundForPhase } from '../../content/phases.ts';
 import {
   advancePhase,
@@ -35,12 +37,13 @@ import {
   calculateFinalResults,
   crisisSurchargeFor,
   describeEffect,
+  type OpcionesDeAplicacion,
   initialGameState,
   initialTeamState,
   puntosFor,
   triggerCrisis,
 } from '../../engine/index.ts';
-import type { DecisionLogInput, GameRepo, GameRow, TeamRow } from './repo.ts';
+import type { DecisionLogInput, DecisionRow, GameRepo, GameRow, TeamRow } from './repo.ts';
 import { DEFAULT_HOST_PASSCODE } from './env.ts';
 import { ApiError } from './http.ts';
 
@@ -334,6 +337,37 @@ export function verifyHost(deps: ServiceDeps, token: string | null): HostVerifyR
  * Registra una decision de equipo. Valida la fase, la ronda, la pertenencia del caso,
  * aplica `applyDecision` y persiste equipo + historial. Ningun calculo en el cliente.
  */
+/**
+ * Ajustes que dependen del caso y de lo ya jugado por ese equipo:
+ *
+ *  - **peso de eficiencia**: los casos no juegan el mismo número de situaciones de Ronda 2
+ *    (6 con los 8 aparatos, 3 con 4). Cada situación reparte `6 / jugables` para que la
+ *    oportunidad de ganar o perder eficiencia sea la misma para todos.
+ *  - **descuento del ahorro de la Ronda 1**: el efecto de Ronda 2 se calcula contra la
+ *    referencia del aparato, así que se resta lo que el equipo ya ganó arreglándolo en la
+ *    auditoría. Sin esto, arreglar el aire y luego ponerlo a 18 °C salía gratis.
+ */
+function contextoDeDecision(
+  caseId: string,
+  scenario: DecisionScenario,
+  previous: Array<Pick<DecisionRow, 'round' | 'choice'>>,
+): OpcionesDeAplicacion {
+  const caso = CASE_BY_ID[caseId];
+  if (!caso || scenario.round !== 'decidir') return {};
+  const descuento = (scenario.requires ?? []).reduce(
+    (acc, aparato) => {
+      const elegida = previous.find((d) => d.choice.startsWith(`r1:${aparato}:`));
+      const efecto = elegida ? OPTIONS_BY_ID[elegida.choice]?.effect : undefined;
+      return {
+        electricidad: (acc.electricidad ?? 0) + (efecto?.electricidad ?? 0),
+        gas: (acc.gas ?? 0) + (efecto?.gas ?? 0),
+      };
+    },
+    { electricidad: 0, gas: 0 } as { electricidad?: number; gas?: number },
+  );
+  return { pesoEficiencia: pesoEficienciaR2(caso.appliances), descontarAhorro: descuento };
+}
+
 export async function submitDecision(
   deps: ServiceDeps,
   gameId: string,
@@ -386,7 +420,7 @@ export async function submitDecision(
   }
 
   const before = toTeamState(teamRow);
-  const after = applyDecision(before, option);
+  const after = applyDecision(before, option, contextoDeDecision(teamRow.case_id, scenario, previous));
 
   await deps.repo.updateTeam(teamRow.id, {
     electricidad: after.electricidad,

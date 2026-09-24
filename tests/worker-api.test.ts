@@ -15,7 +15,7 @@ import type {
   StartGameResponse,
 } from '../types/api.ts';
 import { CASE_CATALOG } from '../content/cases.ts';
-import { OPTIONS_BY_ID, ROUND2_SCENARIOS } from '../content/decisions.ts';
+import { OPTIONS_BY_ID, ROUND2_SCENARIOS, scenariosForCase } from '../content/decisions.ts';
 import { handleRequest } from '../worker/src/index.ts';
 import { InMemoryRepo } from '../worker/src/repo-memory.ts';
 import type { Env } from '../worker/src/env.ts';
@@ -513,17 +513,29 @@ describe('Worker — flujo completo de partida simulada', () => {
       }
     }
 
-    // Ronda 2: las 6 situaciones, con la opcion equilibrada.
+    // Ronda 2: las situaciones de los aparatos de cada caso, con la opcion equilibrada.
     state = await stateOf(await h.post(`/game/${gameId}/phase`, { phase: 'decidir' }, host()));
     assert.equal(state.phase, 'decidir');
     for (const team of started.teams) {
-      for (const scenario of ROUND2_SCENARIOS) {
+      const situaciones = scenariosForCase('decidir', state.cases[team.id].appliances);
+      assert.ok(situaciones.length > 0, `${team.name} sin situaciones`);
+      for (const scenario of situaciones) {
         const res = await h.post(`/game/${gameId}/decision`, {
           teamId: team.id,
           round: 'decidir',
           optionId: `r2:${scenario.id}:b`,
         });
-        assert.equal(res.status, 200);
+        assert.equal(res.status, 200, `${team.name}/${scenario.id}`);
+      }
+      // Y una situacion que su caso no juega se rechaza (antes se aceptaba).
+      const ajena = ROUND2_SCENARIOS.find((s) => !situaciones.includes(s));
+      if (ajena) {
+        const rechazada = await h.post(`/game/${gameId}/decision`, {
+          teamId: team.id,
+          round: 'decidir',
+          optionId: `r2:${ajena.id}:b`,
+        });
+        assert.equal(rechazada.status, 400, `${team.name} no deberia jugar ${ajena.id}`);
       }
     }
     const antesDeCrisis = await stateOf(await h.get(`/game/${gameId}/state`));

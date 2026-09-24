@@ -25,12 +25,46 @@ export function applyEffect(team: TeamState, effect: DecisionEffect): TeamState 
   };
 }
 
+export interface OpcionesDeAplicacion {
+  /**
+   * Peso del delta de eficiencia. Los casos no juegan el mismo numero de situaciones de Ronda 2
+   * (6 con los 8 aparatos, 3 con 4), asi que cada situacion reparte `6 / jugables`: todos los
+   * equipos tienen la misma oportunidad de ganar o perder eficiencia.
+   */
+  pesoEficiencia?: number;
+  /**
+   * Ahorro que el equipo YA capturo en la Ronda 1 sobre los mismos aparatos. El efecto de la
+   * Ronda 2 se calcula contra la referencia del aparato, no contra lo que el equipo dejo: sin
+   * esto, arreglar el aire en la auditoria y volver a ponerlo a 18 °C en la Ronda 2 salia
+   * gratis (el ahorro se conservaba igual). Restando aqui ese ahorro, el aparato vuelve a su
+   * consumo real y desperdiciar se paga.
+   */
+  descontarAhorro?: { electricidad?: number; gas?: number };
+}
+
 /**
  * Aplica una opcion de decision a un equipo.
  * Devuelve un objeto nuevo: el TeamState que recibe no se muta.
+ *
+ * `presupuesto` no se ajusta con el descuento: el costo de una decision es el de su consumo
+ * declarado ("lo que cuesta ese dia"), y asi lo dice el contenido. El descuento corrige el
+ * ESTADO (kWh/m3), que es lo que se compara al final.
  */
-export function applyDecision(team: TeamState, option: DecisionOption): TeamState {
-  return applyEffect(team, option.effect);
+export function applyDecision(
+  team: TeamState,
+  option: DecisionOption,
+  opts: OpcionesDeAplicacion = {},
+): TeamState {
+  const peso = opts.pesoEficiencia ?? 1;
+  const descuento = opts.descontarAhorro;
+  if (peso === 1 && !descuento) return applyEffect(team, option.effect);
+  const effect: DecisionEffect = {
+    ...option.effect,
+    electricidad: (option.effect.electricidad ?? 0) - (descuento?.electricidad ?? 0),
+    gas: (option.effect.gas ?? 0) - (descuento?.gas ?? 0),
+    eficiencia: round2((option.effect.eficiencia ?? 0) * peso),
+  };
+  return applyEffect(team, effect);
 }
 
 /** Resumen textual con numeros concretos (microcopy educativo del documento). */

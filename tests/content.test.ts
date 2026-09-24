@@ -15,6 +15,7 @@ import {
   findOptionInScenario,
   resolveScenarioForOption,
   scenarioKeyOfOption,
+  pesoEficienciaR2,
   scenariosForCase,
 } from '../content/decisions.ts';
 import { TARIFA_ELECTRICIDAD, TARIFA_GAS } from '../content/economy.ts';
@@ -178,13 +179,21 @@ describe('catalogo de decisiones', () => {
     assert.match(primera.id, /desconexion$/);
   });
 
-  it('scenariosForCase limita la Ronda 1 a los aparatos del caso', () => {
+  it('scenariosForCase limita cada ronda a los aparatos del caso', () => {
     const duque = CASE_CATALOG[0];
     const scenarios = scenariosForCase('investigar', duque.appliances);
     assert.equal(scenarios.length, duque.appliances.length);
     const empresa = CASE_CATALOG.find((c) => c.id === 'empresa-x')!;
     assert.ok(scenariosForCase('investigar', empresa.appliances).length < duque.appliances.length);
-    assert.equal(scenariosForCase('decidir', empresa.appliances).length, ROUND2_SCENARIOS.length);
+    // Ronda 2: antes se ofrecia el catalogo completo a todos; ahora solo lo que el caso tiene.
+    assert.equal(scenariosForCase('decidir', duque.appliances).length, ROUND2_SCENARIOS.length);
+    assert.ok(
+      scenariosForCase('decidir', empresa.appliances).length < ROUND2_SCENARIOS.length,
+      'empresa-x no tiene lavadora ni estufa: no puede jugar esas situaciones',
+    );
+    // La crisis es del aula entera: la juegan todos los casos.
+    assert.equal(scenariosForCase('decidir_2', empresa.appliances).length, 1);
+    assert.equal(scenariosForCase('decidir', null).length, ROUND2_SCENARIOS.length);
   });
 
   it('la clave de escenario agrupa las opciones del mismo aparato/situacion', () => {
@@ -222,5 +231,59 @@ describe('plan de fases', () => {
       'decidir_2',
       'resultados',
     ]);
+  });
+
+it('cada caso juega solo las situaciones de Ronda 2 que sus aparatos permiten', () => {
+    const todas = scenariosForCase('decidir', null);
+    assert.equal(todas.length, ROUND2_SCENARIOS.length);
+    for (const caso of CASE_CATALOG) {
+      const jugables = scenariosForCase('decidir', caso.appliances);
+      assert.ok(jugables.length > 0, `${caso.id} se queda sin situaciones`);
+      for (const situacion of jugables) {
+        for (const aparato of situacion.requires ?? []) {
+          assert.ok(
+            caso.appliances.includes(aparato),
+            `${caso.id} jugaria ${situacion.id} sin tener ${aparato}`,
+          );
+        }
+      }
+      // Lo que se descarta es exactamente lo que menciona un aparato ausente.
+      for (const situacion of todas.filter((s) => !jugables.includes(s))) {
+        assert.ok(
+          (situacion.requires ?? []).some((a) => !caso.appliances.includes(a)),
+          `${caso.id} descarta ${situacion.id} sin motivo`,
+        );
+      }
+      // Y el motor rechaza la opcion de una situacion que ese caso no juega.
+      const ajena = todas.find((s) => !jugables.includes(s));
+      if (ajena) {
+        assert.equal(
+          resolveScenarioForOption(ajena.options[0].id, caso.id),
+          undefined,
+          `${caso.id} no deberia poder responder ${ajena.options[0].id}`,
+        );
+      }
+    }
+  });
+
+  it('el peso reparte las mismas oportunidades: todo caso puede ganar 24 de eficiencia en Ronda 2', () => {
+    for (const caso of CASE_CATALOG) {
+      const jugables = scenariosForCase('decidir', caso.appliances);
+      const peso = pesoEficienciaR2(caso.appliances);
+      const maximo = jugables.reduce(
+        (acc, s) => acc + Math.max(...s.options.map((o) => o.effect.eficiencia ?? 0)) * peso,
+        0,
+      );
+      const minimo = jugables.reduce(
+        (acc, s) => acc + Math.min(...s.options.map((o) => o.effect.eficiencia ?? 0)) * peso,
+        0,
+      );
+      assert.ok(
+        Math.abs(maximo - 24) < 0.01,
+        `${caso.id} puede ganar ${maximo} (deberia ganar lo mismo que los demas)`,
+      );
+      // El riesgo a la baja no es idéntico pero sí comparable: entre -22 y -24 puntos.
+      assert.ok(minimo <= -22 && minimo >= -24, `${caso.id} puede perder ${minimo}`);
+    }
   });
 });

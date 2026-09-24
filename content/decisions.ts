@@ -286,11 +286,18 @@ export interface DecisionScenario {
   prompt: string;
   icon: string;
   options: DecisionOption[];
+  /**
+   * Aparatos que la situación menciona y necesita. Un caso solo juega las situaciones cuyos
+   * aparatos tiene todos (ver `scenariosForCase`): antes la Ronda 2 ofrecía a todos los casos
+   * "Día de lavado" u "Hora de cocinar" aunque la vivienda no tuviera lavadora ni estufa.
+   */
+  requires?: string[];
 }
 
 const SCENARIO_CALOR: DecisionScenario = {
   id: 'calor',
   round: 'decidir',
+  requires: ['aire-acondicionado'],
   title: 'Hoy hace mucho calor',
   prompt: 'La temperatura sube a 36 °C y la familia quiere estar fresca.',
   icon: 'ac_unit',
@@ -319,6 +326,7 @@ const SCENARIO_CALOR: DecisionScenario = {
 const SCENARIO_COCINA: DecisionScenario = {
   id: 'cocina',
   round: 'decidir',
+  requires: ['estufa-gas', 'calentador-gas'],
   title: 'Hora de cocinar',
   prompt: 'La cena para cuatro personas está sobre la estufa.',
   icon: 'outdoor_grill',
@@ -342,6 +350,7 @@ const SCENARIO_COCINA: DecisionScenario = {
 const SCENARIO_NEVERA: DecisionScenario = {
   id: 'nevera',
   round: 'decidir',
+  requires: ['nevera'],
   title: 'La nevera no para de zumbar',
   prompt: 'El compresor arranca cada pocos minutos y la cocina está caliente.',
   icon: 'kitchen',
@@ -370,6 +379,7 @@ const SCENARIO_NEVERA: DecisionScenario = {
 const SCENARIO_ENTRETENIMIENTO: DecisionScenario = {
   id: 'entretenimiento',
   round: 'decidir',
+  requires: ['televisor', 'computador'],
   title: 'Tarde de series y computador',
   prompt: 'El televisor y el computador compiten por el mismo enchufe.',
   icon: 'tv',
@@ -398,6 +408,7 @@ const SCENARIO_ENTRETENIMIENTO: DecisionScenario = {
 const SCENARIO_LAVADO: DecisionScenario = {
   id: 'lavado',
   round: 'decidir',
+  requires: ['lavadora', 'calentador-gas'],
   title: 'Día de lavado',
   prompt: 'Hay dos canastos esperando en el cuarto de ropas.',
   icon: 'local_laundry_service',
@@ -426,6 +437,7 @@ const SCENARIO_LAVADO: DecisionScenario = {
 const SCENARIO_ALUMBRADO: DecisionScenario = {
   id: 'alumbrado',
   round: 'decidir',
+  requires: ['iluminacion'],
   title: 'Llegó la noche',
   prompt: 'La casa necesita luz en la sala, la cocina y los cuartos.',
   icon: 'lightbulb',
@@ -527,15 +539,43 @@ export function scenarioKeyOfOption(optionId: string): string {
 
 /**
  * Escenarios que puede jugar un caso concreto en una ronda dada.
- * Ronda 1: solo los electrodomesticos que el caso declara investigables.
+ *   Ronda 1: solo los electrodomesticos que el caso declara investigables.
+ *   Ronda 2: solo las situaciones cuyos aparatos el caso tiene TODOS (una vivienda sin
+ *            lavadora no juega "Dia de lavado").
+ *   Ronda 2b: la crisis es del aula entera, la juegan todos.
+ *
+ * El numero de situaciones por caso no es el mismo (6 con los 8 aparatos, 3 con 4), asi que
+ * el motor reparte el peso de eficiencia de cada situacion segun cuantas juega el caso
+ * (`pesoEficienciaR2`): asi todos tienen la misma oportunidad de ganar o perder eficiencia.
  */
 export function scenariosForCase(
   round: DecisionScenario['round'],
   applianceIds: string[] | null,
 ): DecisionScenario[] {
   const all = SCENARIOS_BY_ROUND[round] ?? [];
-  if (round !== 'investigar' || !applianceIds) return all;
-  return all.filter((s) => applianceIds.includes(s.id.replace('investigar:', '')));
+  if (!applianceIds) return all;
+  if (round === 'investigar') {
+    return all.filter((s) => applianceIds.includes(s.id.replace('investigar:', '')));
+  }
+  if (round === 'decidir') {
+    return all.filter((s) => (s.requires ?? []).every((a) => applianceIds.includes(a)));
+  }
+  return all;
+}
+
+/**
+ * Cuantas situaciones de Ronda 2 juega el caso con esos aparatos.
+ * Base del reparto de peso: `situacionesDeRonda2 / jugables`.
+ */
+export function pesoEficienciaR2(appliances: string[] | null): number {
+  const jugables = scenariosForCase('decidir', appliances).length;
+  if (!jugables) return 1;
+  return ROUND2_SCENARIOS.length / jugables;
+}
+
+/** Aparatos que menciona una situacion (los que hay que descontar de la Ronda 1). */
+export function appliancesOfScenario(scenarioId: string): string[] {
+  return SCENARIOS_BY_ID[scenarioId]?.requires ?? [];
 }
 
 /** Busca la opcion dentro de un escenario (valida pertenencia, no solo existencia). */
@@ -568,9 +608,15 @@ export function resolveScenarioForOption(
   }
   if (prefix === 'r2') {
     const scenario = SCENARIOS_BY_ID[key];
-    return scenario?.round === 'decidir' && findOptionInScenario(scenario, optionId)
-      ? scenario
-      : undefined;
+    if (!scenario || scenario.round !== 'decidir') return undefined;
+    if (!findOptionInScenario(scenario, optionId)) return undefined;
+    if (caseId !== undefined) {
+      const caso = CASE_BY_ID[caseId];
+      if (!caso) return undefined;
+      const falta = (scenario.requires ?? []).some((a) => !caso.appliances.includes(a));
+      if (falta) return undefined;
+    }
+    return scenario;
   }
   if (prefix === 'r2b') {
     const scenario = SCENARIOS_BY_ID['crisis-final'];

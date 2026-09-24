@@ -21,8 +21,9 @@ import { CASE_CATALOG } from '../content/cases.ts';
 import {
   APPLIANCE_BY_ID,
   ROUND2B_SCENARIOS,
-  ROUND2_SCENARIOS,
   OPTIONS_BY_ID,
+  pesoEficienciaR2,
+  scenariosForCase,
 } from '../content/decisions.ts';
 import {
   advancePhase,
@@ -50,11 +51,30 @@ function jugar(estrategia: Estrategia, caso = CASE_CATALOG[0]): GameState {
     teams: [initialTeamState({ id: caso.id, name: caso.name, color: '#3ECF8E' })],
   };
 
-  const apply = (team: TeamState, optionId: string): TeamState => {
+  const apply = (
+    team: TeamState,
+    optionId: string,
+    ajustes?: Parameters<typeof applyDecision>[2],
+  ): TeamState => {
     const option = OPTIONS_BY_ID[optionId];
     assert.ok(option, `opcion inexistente: ${optionId}`);
-    return applyDecision(team, option);
+    return applyDecision(team, option, ajustes);
   };
+
+  // Igual que el Worker: cada caso juega sus situaciones y cada una reparte el peso.
+  const situaciones = scenariosForCase('decidir', caso.appliances);
+  const peso = pesoEficienciaR2(caso.appliances);
+  const ahorroR1 = (team: TeamState, aparatos: string[]): { electricidad: number; gas: number } =>
+    aparatos.reduce<{ electricidad: number; gas: number }>(
+      (acc, aparato) => {
+        const efecto = OPTIONS_BY_ID[`r1:${aparato}:${v.r1}`]?.effect;
+        return {
+          electricidad: acc.electricidad + (efecto?.electricidad ?? 0),
+          gas: acc.gas + (efecto?.gas ?? 0),
+        };
+      },
+      { electricidad: 0, gas: 0 },
+    );
 
   // Ronda 1 — investigar: un diagnostico por aparato del caso.
   state = advancePhase(state, 'investigar');
@@ -65,13 +85,21 @@ function jugar(estrategia: Estrategia, caso = CASE_CATALOG[0]): GameState {
     ),
   };
 
-  // Ronda 2 — decidir: mismo tamano de decision para las 6 situaciones.
+  // Ronda 2 — decidir: solo las situaciones de los aparatos del caso, con su peso y
+  // descontando el ahorro que ya se capturo en la Ronda 1 sobre esos mismos aparatos.
   state = advancePhase(state, 'decidir');
-  assert.equal(ROUND2_SCENARIOS.length, 6);
+  assert.ok(situaciones.length > 0 && situaciones.length <= 6, `situaciones de ${caso.id}: ${situaciones.length}`);
   state = {
     ...state,
     teams: state.teams.map((t) =>
-      ROUND2_SCENARIOS.reduce((acc, s) => apply(acc, `r2:${s.id}:${v.r2}`), t),
+      situaciones.reduce(
+        (acc, s) =>
+          apply(acc, `r2:${s.id}:${v.r2}`, {
+            pesoEficiencia: peso,
+            descontarAhorro: ahorroR1(acc, s.requires ?? []),
+          }),
+        t,
+      ),
     ),
   };
 
@@ -199,6 +227,8 @@ describe('balanceo de la partida', () => {
       const t = final.teams[0];
       assert.equal(final.phase, 'resultados');
       assert.ok(t.presupuesto > 0, `${caso.id} termina en deuda`);
+      // Todos los casos alcanzan la misma eficiencia con la misma estrategia: el peso de cada
+      // situacion compensa que unos jueguen 3 y otros 6 (antes solo podian ganar los de 8 aparatos).
       assert.ok(t.eficiencia >= 70, `${caso.id} eficiencia=${t.eficiencia}`);
       assert.ok(
         caso.appliances.every((app) => APPLIANCE_BY_ID[app]),

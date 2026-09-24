@@ -26,7 +26,7 @@ import PodiumBurst from '@/components/host/PodiumBurst';
 import { audio, useAudioEvent, useSoundEnabled } from '@/lib/audio';
 import { CONSUMO_REFERENCIA_ELECTRICIDAD, PRESUPUESTO_INICIAL } from '@/content/economy';
 import { CASE_CATALOG } from '@/content/cases';
-import { ROUND2_SCENARIOS } from '@/content/decisions';
+import { scenariosForCase } from '@/content/decisions';
 import { compareTeams } from '@/engine/results';
 import { api, describeApiError, setRuntimeHostToken } from '@/lib/api';
 import { isDevelopment, missingConfig } from '@/lib/env';
@@ -377,10 +377,14 @@ function HostConsole() {
     const nuevos: FeedEvent[] = [];
     for (const team of state.teams) {
       const answered = state.answered[team.id] ?? [];
-      const aparatos = state.cases[team.id]?.appliances.length ?? 0;
+      const casoDelEquipo = state.cases[team.id];
+      const aparatos = casoDelEquipo?.appliances.length ?? 0;
+      // Cada caso juega solo las situaciones de sus aparatos: el "cerró la ronda" se cuenta
+      // contra las suyas, no contra las seis del catálogo (si no, nunca se anunciaría).
+      const situaciones = scenariosForCase('decidir', casoDelEquipo?.appliances ?? null).length;
       const marcas: Array<[string, boolean, string]> = [
         [`${team.id}:r1`, aparatos > 0 && answered.filter((k) => k.startsWith('r1:')).length >= aparatos, 'terminó la auditoría'],
-        [`${team.id}:r2`, answered.filter((k) => k.startsWith('r2:')).length >= ROUND2_SCENARIOS.length, 'completó sus decisiones'],
+        [`${team.id}:r2`, situaciones > 0 && answered.filter((k) => k.startsWith('r2:')).length >= situaciones, 'completó sus decisiones'],
         [`${team.id}:r2b`, answered.includes('r2b'), 'cerró sus últimas decisiones'],
       ];
       for (const [clave, logrado, texto] of marcas) {

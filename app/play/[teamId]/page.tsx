@@ -23,7 +23,11 @@ import PhaseBanner from '@/components/play/PhaseBanner';
 import RoundProgress from '@/components/play/RoundProgress';
 import SoundToggle from '@/components/SoundToggle';
 import { hapticConfirm, hapticDeny, hapticTap } from '@/components/play/haptics';
-import { APPLIANCE_BY_ID, ROUND2B_SCENARIOS, ROUND2_SCENARIOS } from '@/content/decisions';
+import {
+  APPLIANCE_BY_ID,
+  ROUND2B_SCENARIOS,
+  scenariosForCase,
+} from '@/content/decisions';
 import { PRESUPUESTO_INICIAL } from '@/content/economy';
 import type { ApplianceProfile, DecisionScenario } from '@/content/decisions';
 import type { TeamResult } from '@/engine/results';
@@ -77,7 +81,10 @@ function rondaCompleta(
   round: 'decidir' | 'decidir_2',
   teamId: string,
 ): boolean {
-  const escenarios = round === 'decidir_2' ? ROUND2B_SCENARIOS : ROUND2_SCENARIOS;
+  const escenarios =
+    round === 'decidir_2'
+      ? ROUND2B_SCENARIOS
+      : scenariosForCase('decidir', state.cases[teamId]?.appliances ?? null);
   if (escenarios.length === 0) return false;
   const contestadas = state.answered[teamId] ?? [];
   return escenarios.every((escenario) =>
@@ -243,10 +250,11 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
       };
     }
     if (phase === 'decidir') {
+      const mias = scenariosForCase('decidir', caso?.appliances ?? null);
       return {
         etiqueta: 'Situaciones resueltas',
-        total: ROUND2_SCENARIOS.length,
-        resolved: ROUND2_SCENARIOS.filter((s) => answered.includes(`r2:${s.id}`)).length,
+        total: mias.length,
+        resolved: mias.filter((s) => answered.includes(`r2:${s.id}`)).length,
         tono: 'eficiencia' as const,
       };
     }
@@ -267,7 +275,11 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
     [choice],
   );
 
-  const escenariosRonda2 = phase === 'decidir_2' ? ROUND2B_SCENARIOS : ROUND2_SCENARIOS;
+  // Solo las situaciones cuyos aparatos tiene el caso: una oficina no decide sobre una lavadora.
+  const escenariosRonda2 =
+    phase === 'decidir_2'
+      ? ROUND2B_SCENARIOS
+      : scenariosForCase('decidir', caso?.appliances ?? null);
   const rondaActual: Ronda | null =
     phase === 'investigar' ? 'investigar' : phase === 'decidir' ? 'decidir' : phase === 'decidir_2' ? 'decidir_2' : null;
 
