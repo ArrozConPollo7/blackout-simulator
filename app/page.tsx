@@ -51,8 +51,9 @@ export default function HomePage() {
               </h2>
             </div>
             <p className="font-body-sm text-body-sm text-text-secondary">
-              Pantalla para el proyector: crea la partida, abre las rondas y dispara la crisis
-              energética. El vecindario 3D reacciona al estado real de cada equipo.
+              Pantalla para el proyector: pide la contraseña de anfitrión, crea la partida, proyecta
+              el QR de registro y abre las rondas. El vecindario 3D reacciona al estado real de cada
+              equipo.
             </p>
             <Link
               href={partida?.hostPath ?? '/host'}
@@ -78,9 +79,16 @@ export default function HomePage() {
               </h2>
             </div>
             <p className="font-body-sm text-body-sm text-text-secondary">
-              Un celular por equipo. Cada enlace es único y trae el caso asignado: los equipos
-              investigan sus aparatos y deciden sobre ellos.
+              Un celular por equipo. Todos entran por el mismo registro (el QR del proyector) y
+              escriben el nombre de su mesa: el caso se asigna por orden de llegada.
             </p>
+            <Link
+              href={partida ? `/join?game=${partida.gameId}` : '/join'}
+              className="h-12 px-5 rounded-xl bg-primary-container text-on-primary-container font-label-lg text-label-lg font-bold uppercase tracking-wider flex items-center justify-center gap-2 hover:opacity-90 active:scale-95 transition-all"
+            >
+              <span className="material-symbols-outlined text-[20px]">qr_code_scanner</span>
+              Registrar un equipo
+            </Link>
             {partida && partida.teams.length > 0 ? (
               <div className="flex flex-col gap-2">
                 {partida.teams.map((team) => (

@@ -55,5 +55,6 @@ const server = createServer(async (req, res) => {
 server.listen(port, () => {
   console.log(`API local (repositorio en memoria) en http://127.0.0.1:${port}`);
   console.log(`HOST_TOKEN=${hostToken} (debe coincidir con NEXT_PUBLIC_HOST_TOKEN)`);
+  console.log('La consola /host tambien acepta la contraseña de anfitrión: 9806');
   console.log('GET /health para comprobar que responde.');
 });

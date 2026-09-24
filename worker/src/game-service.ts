@@ -13,11 +13,14 @@ import type {
   DecisionRequest,
   DecisionResponse,
   GameStateResponse,
+  HostVerifyResponse,
+  JoinGameRequest,
+  JoinGameResponse,
   PhaseResponse,
   StartGameRequest,
   StartGameResponse,
 } from '../../types/api.ts';
-import { CASE_BY_ID, TEAM_COLORS, casesForTeamCount } from '../../content/cases.ts';
+import { CASE_BY_ID, CASE_CATALOG, TEAM_COLORS } from '../../content/cases.ts';
 import {
   APPLIANCE_BY_ID,
   OPTIONS_BY_ID,
@@ -38,12 +41,15 @@ import {
   triggerCrisis,
 } from '../../engine/index.ts';
 import type { DecisionLogInput, GameRepo, GameRow, TeamRow } from './repo.ts';
+import { DEFAULT_HOST_PASSCODE } from './env.ts';
 import { ApiError } from './http.ts';
 
 export interface ServiceDeps {
   repo: GameRepo;
   now?: () => Date;
   hostToken?: string | null;
+  /** Contraseña que se teclea en la consola del Host. Si falta vale el default. */
+  hostPasscode?: string;
   allowInsecureHost?: boolean;
 }
 
@@ -123,20 +129,23 @@ export async function getGameState(deps: ServiceDeps, gameId: string): Promise<G
 }
 
 /**
- * Crea la partida y sus equipos desde `content/cases.ts`.
- * La partida nace en `lobby`; el Host abre las rondas con POST /game/:id/phase.
+ * Crea la partida. En `lobby` **no hay equipos todavía**: cada mesa entra con el QR
+ * del proyector (`/join?game=...`) y escribe su propio nombre, así que el caso se
+ * asigna en el orden de llegada (`content/cases.ts`).
+ * `slots` solo dice cuántos equipos se esperan; el tope real es el catálogo de casos.
  */
 export async function startGame(deps: ServiceDeps, body: StartGameRequest): Promise<StartGameResponse> {
   const now = deps.now?.() ?? new Date();
-  const casos = body.cases
-    ? body.cases.map((id) => {
-        const caso = CASE_BY_ID[id];
-        if (!caso) throw new ApiError(400, 'bad_request', `Caso desconocido: ${id}`);
-        return caso;
-      })
-    : casesForTeamCount(body.teamCount ?? 6);
 
-  if (casos.length === 0) throw new ApiError(400, 'bad_request', 'La partida necesita al menos un equipo');
+  // Validación temprana de `cases` (compatibilidad: la partida reparte por orden de llegada).
+  if (body.cases) {
+    for (const id of body.cases) {
+      if (!CASE_BY_ID[id]) throw new ApiError(400, 'bad_request', `Caso desconocido: ${id}`);
+    }
+  }
+
+  const pedidos = Number.isFinite(body.teamCount) ? Math.trunc(body.teamCount as number) : CASE_CATALOG.length;
+  const slots = Math.max(1, Math.min(CASE_CATALOG.length, pedidos || CASE_CATALOG.length));
 
   const game = await deps.repo.createGame({
     phase: 'lobby',
@@ -144,55 +153,181 @@ export async function startGame(deps: ServiceDeps, body: StartGameRequest): Prom
     crisisTriggered: false,
   });
 
-  const created = await deps.repo.createTeams(
-    casos.map((caso, index) => {
-      const identity = initialTeamState({
-        id: '',
-        name: caso.name,
-        color: TEAM_COLORS[index % TEAM_COLORS.length],
-      });
-      return {
-        game_id: game.id,
-        name: identity.name,
-        case_id: caso.id,
-        color: identity.color,
-        electricidad: identity.electricidad,
-        gas: identity.gas,
-        presupuesto: identity.presupuesto,
-        eficiencia: identity.eficiencia,
-        puntos: identity.puntos,
-      };
-    }),
-  );
-
-  const state = await getGameState(deps, game.id);
   return {
     gameId: game.id,
     phase: game.phase,
-    teams: created.map((row) => ({
-      id: row.id,
-      name: row.name,
-      caseId: row.case_id,
-      color: row.color,
-      playPath: `/play/${row.id}?game=${game.id}`,
-    })),
+    slots,
+    teams: [],
     hostPath: `/host?game=${game.id}`,
-    state,
+    joinPath: `/join?game=${game.id}`,
+    state: await getGameState(deps, game.id),
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* Alta de equipos: el nombre lo escribe cada mesa                     */
+/* ------------------------------------------------------------------ */
+
+const NAME_MIN = 2;
+const NAME_MAX = 24;
+
+/** Nombre de equipo: sin caracteres de control, espacios colapsados y longitud acotada. */
+export function normalizeTeamName(raw: unknown): string {
+  if (typeof raw !== 'string') {
+    throw new ApiError(400, 'bad_request', 'Cada equipo necesita un nombre.');
+  }
+  const name = raw.replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim();
+  if (name.length < NAME_MIN || name.length > NAME_MAX) {
+    throw new ApiError(
+      400,
+      'bad_request',
+      `El nombre del equipo debe tener entre ${NAME_MIN} y ${NAME_MAX} caracteres.`,
+    );
+  }
+  return name;
+}
+
+interface CreatedTeam {
+  teamId: string;
+  name: string;
+  caseId: string;
+  color: string;
+}
+
+/**
+ * Crea un equipo dentro de la partida. El caso se toma del catálogo en orden y sin
+ * repetir; el color de identidad sale del mismo índice, así que dos equipos nunca
+ * comparten color. Rechaza nombres repetidos (en el aula, dos "Los Tigres" son un lío).
+ */
+async function createTeamInGame(
+  deps: ServiceDeps,
+  gameId: string,
+  rawName: unknown,
+  options: { allowStarted: boolean },
+): Promise<CreatedTeam> {
+  const { game, teams } = await loadGame(deps, gameId);
+
+  if (game.phase === 'resultados') {
+    throw new ApiError(409, 'wrong_phase', 'La partida ya terminó: crea una nueva para volver a jugar.');
+  }
+  if (!options.allowStarted && game.phase !== 'lobby') {
+    throw new ApiError(
+      409,
+      'wrong_phase',
+      'La partida ya empezó: pide al anfitrión que añada tu equipo desde la consola del Host.',
+    );
+  }
+  if (teams.length >= CASE_CATALOG.length) {
+    throw new ApiError(
+      409,
+      'game_full',
+      `La partida admite como máximo ${CASE_CATALOG.length} equipos y ya están todos dentro.`,
+    );
+  }
+
+  const name = normalizeTeamName(rawName);
+  if (teams.some((t) => t.name.trim().toLowerCase() === name.toLowerCase())) {
+    throw new ApiError(409, 'name_taken', `Ya hay un equipo llamado "${name}": elegid otro nombre.`);
+  }
+
+  const usados = new Set(teams.map((t) => t.case_id));
+  const index = CASE_CATALOG.findIndex((caso) => !usados.has(caso.id));
+  if (index < 0) {
+    throw new ApiError(409, 'game_full', 'No quedan casos libres para repartir en esta partida.');
+  }
+  const caso = CASE_CATALOG[index];
+
+  const identity = initialTeamState({
+    id: '',
+    name,
+    color: TEAM_COLORS[index % TEAM_COLORS.length],
+  });
+
+  const [row] = await deps.repo.createTeams([
+    {
+      game_id: gameId,
+      name: identity.name,
+      case_id: caso.id,
+      color: identity.color,
+      electricidad: identity.electricidad,
+      gas: identity.gas,
+      presupuesto: identity.presupuesto,
+      eficiencia: identity.eficiencia,
+      puntos: identity.puntos,
+    },
+  ]);
+  if (!row) throw new ApiError(500, 'internal', 'El repositorio no devolvió el equipo creado');
+
+  return { teamId: row.id, name: row.name, caseId: row.case_id, color: row.color };
+}
+
+/** Alta pública: la mesa entra desde el QR del proyector durante el lobby. */
+export async function joinGame(
+  deps: ServiceDeps,
+  gameId: string,
+  body: JoinGameRequest,
+): Promise<JoinGameResponse> {
+  const created = await createTeamInGame(deps, gameId, body?.name, { allowStarted: false });
+  return {
+    gameId,
+    ...created,
+    playPath: `/play/${created.teamId}?game=${gameId}`,
+    state: await getGameState(deps, gameId),
+  };
+}
+
+/** Alta desde la consola del Host: sirve para el equipo que llega tarde (fase ya abierta). */
+export async function hostAddTeam(
+  deps: ServiceDeps,
+  gameId: string,
+  body: JoinGameRequest,
+  hostToken: string | null,
+): Promise<JoinGameResponse> {
+  assertHost(deps, hostToken);
+  const created = await createTeamInGame(deps, gameId, body?.name, { allowStarted: true });
+  return {
+    gameId,
+    ...created,
+    playPath: `/play/${created.teamId}?game=${gameId}`,
+    state: await getGameState(deps, gameId),
+  };
+}
+
+/** Comparación de credenciales sin cortocircuito por longitud del prefijo. */
+function equalTokens(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/**
+ * Guardia de las acciones privilegiadas. Acepta la contraseña de la consola del Host
+ * (la que se teclea al entrar en `/host`) o el `HOST_TOKEN` clásico del Worker: el
+ * mismo valor viaja en la cabecera `x-host-token`.
+ */
 function assertHost(deps: ServiceDeps, token: string | null): void {
   if (deps.allowInsecureHost) return;
-  if (!deps.hostToken) {
+  const admitidos = [deps.hostToken, deps.hostPasscode ?? DEFAULT_HOST_PASSCODE].filter(
+    (value): value is string => typeof value === 'string' && value.length > 0,
+  );
+  if (admitidos.length === 0) {
     throw new ApiError(
       503,
       'not_configured',
-      'El Worker no tiene HOST_TOKEN configurado: las acciones de host estan deshabilitadas.',
+      'El Worker no tiene HOST_TOKEN ni HOST_PASSCODE configurados: las acciones de host estan deshabilitadas.',
     );
   }
-  if (token !== deps.hostToken) {
-    throw new ApiError(403, 'forbidden', 'Token de host invalido o ausente (cabecera x-host-token).');
+  const candidato = (token ?? '').trim();
+  if (!candidato || !admitidos.some((esperado) => equalTokens(esperado, candidato))) {
+    throw new ApiError(403, 'forbidden', 'Contrasena de host incorrecta o ausente (cabecera x-host-token).');
   }
+}
+
+/** Sondeo de la contraseña antes de abrir la consola: no revela nada más. */
+export function verifyHost(deps: ServiceDeps, token: string | null): HostVerifyResponse {
+  assertHost(deps, token);
+  return { ok: true, gameId: null };
 }
 
 /**

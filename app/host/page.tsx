@@ -16,12 +16,18 @@ import GameHeader from '@/components/GameHeader';
 import TeamCard from '@/components/TeamCard';
 import CrisisOverlay from '@/components/CrisisOverlay';
 import RankingIndicator from '@/components/RankingIndicator';
+import HostGate from '@/components/HostGate';
+import JoinQr from '@/components/JoinQr';
+import SoundToggle from '@/components/SoundToggle';
+import { audio, useAudioEvent, useSoundEnabled } from '@/lib/audio';
 import { CONSUMO_REFERENCIA_ELECTRICIDAD, PRESUPUESTO_INICIAL } from '@/content/economy';
+import { CASE_CATALOG } from '@/content/cases';
 import { compareTeams } from '@/engine/results';
-import { api, describeApiError } from '@/lib/api';
+import { api, describeApiError, setRuntimeHostToken } from '@/lib/api';
 import { missingConfig } from '@/lib/env';
-import { resolveGameId, writeActiveGame } from '@/lib/game-store';
-import { useGameState } from '@/lib/useGameState';
+import { clearHostPass, readHostPass, writeHostPass } from '@/lib/host-auth';
+import { readActiveGame, resolveGameId, writeActiveGame } from '@/lib/game-store';
+import { useGameState, useRemainingMs } from '@/lib/useGameState';
 import {
   hostPhaseOf,
   phaseCode,
@@ -50,14 +56,51 @@ function HostConsole() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
+  /** null = la consola aún no está desbloqueada (pide la contraseña de anfitrión). */
+  const [passcode, setPasscode] = useState<string | null>(null);
+  const [slots, setSlots] = useState<number | null>(null);
+  const [nuevoEquipo, setNuevoEquipo] = useState('');
+  /** URL absoluta del registro de mesas: es lo que codifica el QR del proyector. */
+  const [joinUrl, setJoinUrl] = useState<string | null>(null);
 
   const connection = useGameState(gameId);
   const state = connection.state;
   const phase = state?.phase;
 
+  // El proyector recuerda la contraseña solo durante esta pestaña (lib/host-auth.ts).
+  useEffect(() => {
+    const guardada = readHostPass();
+    if (guardada) {
+      setRuntimeHostToken(guardada);
+      setPasscode(guardada);
+    }
+    setSlots(readActiveGame()?.slots ?? null);
+  }, []);
+
+  const desbloquear = useCallback((valor: string) => {
+    writeHostPass(valor);
+    setRuntimeHostToken(valor);
+    setPasscode(valor);
+  }, []);
+
+  const bloquearConsola = useCallback(() => {
+    clearHostPass();
+    setRuntimeHostToken(null);
+    setPasscode(null);
+  }, []);
+
   useEffect(() => {
     setGameId(resolveGameId(searchParams.get('game')));
   }, [searchParams]);
+
+  // El QR lleva la partida en la URL: la mesa escribe su nombre y entra.
+  useEffect(() => {
+    if (!state) {
+      setJoinUrl(null);
+      return;
+    }
+    setJoinUrl(`${window.location.origin}/join?game=${state.gameId}`);
+  }, [state]);
 
   // Publica la partida activa para el portal y el navegador de demo.
   useEffect(() => {
@@ -82,9 +125,11 @@ function HostConsole() {
       try {
         await action();
         setNotice(mensaje);
+        audio.play('confirm');
         await connection.reload();
       } catch (cause) {
         setError(describeApiError(cause));
+        audio.play('deny');
       } finally {
         setBusy(false);
       }
@@ -98,20 +143,19 @@ function HostConsole() {
       setError(null);
       try {
         const started = await api.startGame({ teamCount });
+        setSlots(started.slots);
         writeActiveGame({
           gameId: started.gameId,
           hostPath: started.hostPath,
           updatedAt: Date.now(),
-          teams: started.teams.map((team) => ({
-            id: team.id,
-            name: team.name,
-            color: team.color,
-            path: team.playPath,
-          })),
+          slots: started.slots,
+          teams: [],
         });
         window.history.replaceState(null, '', started.hostPath);
         setGameId(started.gameId);
-        setNotice(`Partida creada con ${started.teams.length} equipos.`);
+        setNotice(
+          `Partida creada. Muestra el QR: los equipos entran por su cuenta y ponen su nombre (se esperan ${started.slots}).`,
+        );
       } catch (cause) {
         setError(describeApiError(cause));
       } finally {
@@ -120,6 +164,23 @@ function HostConsole() {
     },
     [],
   );
+
+  const agregarEquipo = useCallback(async () => {
+    const nombre = nuevoEquipo.replace(/\s+/g, ' ').trim();
+    if (!state || nombre.length < 2 || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const creado = await api.addTeam(state.gameId, nombre);
+      setNuevoEquipo('');
+      setNotice(`Equipo "${creado.name}" añadido: ya puede decidir en esta ronda.`);
+      await connection.reload();
+    } catch (cause) {
+      setError(describeApiError(cause));
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, connection, nuevoEquipo, state]);
 
   const olvidarPartida = useCallback(() => {
     setGameId(null);
@@ -164,6 +225,67 @@ function HostConsole() {
   const hostPhase = hostPhaseOf(phase);
   const isCrisis = hostPhase === 'crisis' || Boolean(state?.crisisTriggered);
   const step: PhaseStep = { phase, next: siguienteEtiqueta(phase) };
+  const slotsEsperados = slots ?? CASE_CATALOG.length;
+  const equiposDentro = state?.teams.length ?? 0;
+  const puedeAnadirEquipo =
+    Boolean(state) && phase !== 'resultados' && equiposDentro < CASE_CATALOG.length;
+
+  /* ------------------------------------------------------------------ */
+  /* Sonido del proyector (lib/audio.ts): sintetizado, sin archivos      */
+  /* ------------------------------------------------------------------ */
+
+  const [soundOn] = useSoundEnabled();
+  const play = useAudioEvent();
+  const remaining = useRemainingMs(state?.timerEndsAt ?? null, phase, connection.clockSkewMs);
+  const faseSonada = useRef<typeof phase>(undefined);
+  const equiposSonados = useRef(0);
+  const avisoTiempoDe = useRef<typeof phase>(undefined);
+
+  // Cambio de fase: relay para abrir ronda, sirena al caer la crisis, fanfarria en el podio.
+  useEffect(() => {
+    const anterior = faseSonada.current;
+    faseSonada.current = phase;
+    if (!soundOn || !phase || anterior === undefined || anterior === phase) return;
+    if (phase === 'crisis') play('crisis');
+    else if (phase === 'resultados') play('podium');
+    else play('phase');
+  }, [phase, play, soundOn]);
+
+  // Cada mesa que entra (QR o alta manual) se anuncia con un tono breve.
+  useEffect(() => {
+    const total = state?.teams.length ?? 0;
+    const antes = equiposSonados.current;
+    equiposSonados.current = total;
+    if (!soundOn || total <= antes || antes === 0) return;
+    play('join');
+  }, [play, soundOn, state?.teams.length]);
+
+  // Zumbido de subestación mientras la sesión está viva; sube de tensión en la crisis.
+  useEffect(() => {
+    if (!soundOn) {
+      audio.stopAmbient();
+      return;
+    }
+    audio.startAmbient();
+    return () => audio.stopAmbient();
+  }, [soundOn]);
+
+  useEffect(() => {
+    audio.setCrisis(hostPhase === 'crisis');
+  }, [hostPhase]);
+
+  // Últimos 10 segundos de una fase cronometrada: un tic doble por fase.
+  useEffect(() => {
+    if (!soundOn || remaining === null || remaining > 10_000) return;
+    if (avisoTiempoDe.current === phase) return;
+    avisoTiempoDe.current = phase;
+    play('timeLow');
+  }, [phase, play, remaining, soundOn]);
+
+  // Sin contraseña no hay consola: el proyector es público, los controles no.
+  if (!passcode) {
+    return <HostGate onUnlock={desbloquear} />;
+  }
 
   return (
     <div className="min-h-screen bg-bg-primary text-text-primary flex flex-col">
@@ -246,6 +368,7 @@ function HostConsole() {
                     ? 'SIN CONEXIÓN'
                     : 'ESPERANDO PARTIDA'}
             </span>
+            <SoundToggle />
             <button
               type="button"
               onClick={olvidarPartida}
@@ -253,6 +376,15 @@ function HostConsole() {
               hidden={!state}
             >
               Otra partida
+            </button>
+            <button
+              type="button"
+              onClick={bloquearConsola}
+              className="px-3 py-1 rounded border border-border-subtle bg-surface text-text-secondary hover:text-text-primary uppercase flex items-center gap-1"
+              title="Cierra la sesión de anfitrión en este navegador"
+            >
+              <span className="material-symbols-outlined text-[14px]">lock</span>
+              Bloquear
             </button>
           </div>
         </div>
@@ -285,8 +417,8 @@ function HostConsole() {
                 Crear partida
               </h1>
               <p className="font-body-md text-body-md text-text-secondary max-w-xl">
-                El Worker crea la partida y asigna un caso a cada equipo. Los equipos entran con el
-                enlace que aparece en el lobby.
+                El Worker abre la partida y reparte un caso por mesa según el orden de llegada.
+                Después verás el QR: cada equipo lo escanea, escribe su nombre y queda dentro.
               </p>
             </div>
             <div className="flex flex-wrap items-center justify-center gap-3">
@@ -310,7 +442,7 @@ function HostConsole() {
 
         {/* LOBBY */}
         {hostPhase === 'lobby' && state && (
-          <div className="flex flex-col gap-6 w-full flex-1 justify-between">
+          <div className="flex flex-col gap-6 w-full flex-1">
             <section className="w-full bg-bg-surface rounded-xl p-6 lg:p-8 shadow-md border border-border-subtle">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
                 <div className="flex flex-col gap-2">
@@ -321,83 +453,165 @@ function HostConsole() {
                     </span>
                   </div>
                   <h1 className="font-headline-lg text-headline-lg text-text-primary tracking-tight uppercase font-bold">
-                    Lobby — cada equipo entra con su enlace
+                    Lobby — cada mesa entra con su nombre
                   </h1>
                   <p className="font-body-md text-body-md text-text-secondary max-w-2xl">
-                    Abre la partida cuando todos los equipos estén dentro. La primera ronda es la
-                    investigación de consumos ocultos.
+                    Proyecta el código QR: cada equipo lo escanea, escribe el nombre de su mesa y
+                    recibe un caso con consumos ocultos. Abre la primera ronda cuando estén dentro.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() =>
-                    void runHostAction(
-                      () => api.setPhase(state.gameId, 'investigar'),
-                      'Fase de investigación abierta.',
-                    )
-                  }
-                  className="h-12 px-8 rounded-xl bg-primary-container text-on-primary-container font-label-lg text-label-lg font-bold uppercase tracking-wider shadow-lg hover:opacity-90 active:scale-95 disabled:opacity-60 flex items-center gap-2"
-                >
-                  <span className="material-symbols-outlined text-[20px]">play_arrow</span>
-                  <span>Iniciar juego</span>
-                </button>
+                <div className="flex items-center gap-5 shrink-0">
+                  <div className="text-right">
+                    <span className="block font-label-sm text-label-sm text-text-secondary uppercase tracking-wider">
+                      Equipos dentro
+                    </span>
+                    <span className="font-headline-lg text-headline-lg font-bold tabular-nums text-text-primary">
+                      {equiposDentro}
+                      <span className="text-[18px] text-text-secondary">/{slotsEsperados}</span>
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={busy || equiposDentro === 0}
+                    onClick={() =>
+                      void runHostAction(
+                        () => api.setPhase(state.gameId, 'investigar'),
+                        'Fase de investigación abierta.',
+                      )
+                    }
+                    className="h-12 px-8 rounded-xl bg-primary-container text-on-primary-container font-label-lg text-label-lg font-bold uppercase tracking-wider shadow-lg hover:opacity-90 active:scale-95 disabled:opacity-60 flex items-center gap-2"
+                  >
+                    <span className="material-symbols-outlined text-[20px]">play_arrow</span>
+                    <span>Iniciar juego</span>
+                  </button>
+                </div>
               </div>
             </section>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {state.teams.map((team, index) => {
-                const caso = state.cases[team.id];
-                const url = `/play/${team.id}?game=${state.gameId}`;
-                return (
-                  <div
-                    key={team.id}
-                    className="bg-bg-surface rounded-xl p-5 border border-border-subtle shadow-lg flex flex-col gap-3"
-                  >
-                    <div className="flex items-center justify-between pb-3 border-b border-border-subtle">
-                      <div className="flex items-center gap-3">
-                        <div
-                          className="w-3.5 h-3.5 rounded-full"
-                          style={{ backgroundColor: team.color }}
-                        ></div>
-                        <div>
-                          <span className="font-label-sm text-[11px] text-text-secondary uppercase block">
-                            EQUIPO {String(index + 1).padStart(2, '0')}
-                          </span>
-                          <h2 className="font-headline-sm font-bold text-text-primary uppercase">
-                            {team.name}
-                          </h2>
-                        </div>
-                      </div>
-                      <span className="px-2 py-0.5 rounded bg-accent-eficiencia/10 border border-accent-eficiencia/30 text-accent-eficiencia font-label-sm text-label-sm font-bold uppercase">
-                        LISTO
-                      </span>
-                    </div>
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,440px)_minmax(0,1fr)] gap-4 items-start">
+              {/* Registro: QR + alta manual de respaldo */}
+              <section className="bg-bg-surface rounded-xl border border-border-subtle p-5 flex flex-col gap-5 shadow-lg">
+                {joinUrl ? (
+                  <JoinQr url={joinUrl} size={192} />
+                ) : (
+                  <p className="font-label-md text-label-md text-text-secondary">
+                    Preparando el enlace de registro…
+                  </p>
+                )}
 
-                    <div className="bg-surface-container-lowest p-3 rounded-lg flex flex-col gap-1 border border-border-subtle">
-                      <span className="font-label-sm text-label-sm text-text-secondary">
-                        CASO ASIGNADO
-                      </span>
-                      <span className="font-label-md text-label-md text-text-primary font-bold truncate">
-                        {caso?.name ?? team.name}
-                      </span>
-                      <span className="font-label-sm text-[11px] text-text-secondary">
-                        {caso ? `${caso.appliances.length} aparatos · ${caso.hiddenProblems.length} consumos ocultos` : ''}
-                      </span>
-                    </div>
-
-                    <a
-                      href={url}
-                      className="font-label-sm text-[11px] text-accent-presupuesto break-all hover:underline"
+                <div className="flex flex-col gap-2 pt-4 border-t border-border-subtle">
+                  <span className="font-label-sm text-label-sm text-text-secondary uppercase tracking-wider">
+                    Alta manual (celular sin cámara)
+                  </span>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={nuevoEquipo}
+                      onChange={(event) => setNuevoEquipo(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          void agregarEquipo();
+                        }
+                      }}
+                      maxLength={24}
+                      placeholder="Nombre del equipo"
+                      className="flex-1 h-11 px-3 rounded-lg bg-bg-primary border border-border-subtle outline-none font-label-md text-label-md text-text-primary placeholder:text-text-secondary/50 focus:border-accent-presupuesto"
+                    />
+                    <button
+                      type="button"
+                      disabled={busy || nuevoEquipo.trim().length < 2}
+                      onClick={() => void agregarEquipo()}
+                      className="h-11 px-4 rounded-lg border border-border-subtle bg-surface-container-low font-label-sm text-label-sm uppercase tracking-wider text-text-primary hover:border-accent-presupuesto disabled:opacity-50"
                     >
-                      {url}
-                    </a>
+                      Añadir
+                    </button>
                   </div>
-                );
-              })}
+                </div>
+              </section>
+
+              {/* Mesas registradas */}
+              <section className="flex flex-col gap-3">
+                <div className="flex items-center justify-between font-label-sm text-label-sm text-text-secondary uppercase tracking-wider">
+                  <span>Mesas registradas</span>
+                  <span className="tabular-nums">
+                    {equiposDentro} de {slotsEsperados}
+                  </span>
+                </div>
+
+                {state.teams.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-border-subtle p-10 flex flex-col items-center gap-3 text-center">
+                    <span className="material-symbols-outlined text-[32px] text-text-secondary">
+                      qr_code_2
+                    </span>
+                    <p className="font-label-md text-label-md text-text-secondary uppercase">
+                      Todavía no hay ninguna mesa dentro
+                    </p>
+                    <p className="font-body-sm text-body-sm text-text-secondary max-w-md">
+                      Que la primera escanee el QR del proyector. El caso se asigna por orden de
+                      llegada, así que dos equipos nunca repiten instalación.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {state.teams.map((team, index) => {
+                      const caso = state.cases[team.id];
+                      const url = `/play/${team.id}?game=${state.gameId}`;
+                      return (
+                        <div
+                          key={team.id}
+                          className="bg-bg-surface rounded-xl p-5 border border-border-subtle shadow-lg flex flex-col gap-3"
+                        >
+                          <div className="flex items-center justify-between pb-3 border-b border-border-subtle">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div
+                                className="w-3.5 h-3.5 rounded-full shrink-0"
+                                style={{ backgroundColor: team.color }}
+                              ></div>
+                              <div className="min-w-0">
+                                <span className="font-label-sm text-[11px] text-text-secondary uppercase block">
+                                  MESA {String(index + 1).padStart(2, '0')}
+                                </span>
+                                <h2 className="font-headline-sm font-bold text-text-primary uppercase truncate">
+                                  {team.name}
+                                </h2>
+                              </div>
+                            </div>
+                            <span className="px-2 py-0.5 rounded bg-accent-eficiencia/10 border border-accent-eficiencia/30 text-accent-eficiencia font-label-sm text-label-sm font-bold uppercase">
+                              DENTRO
+                            </span>
+                          </div>
+
+                          <div className="bg-surface-container-lowest p-3 rounded-lg flex flex-col gap-1 border border-border-subtle">
+                            <span className="font-label-sm text-label-sm text-text-secondary">
+                              CASO ASIGNADO
+                            </span>
+                            <span className="font-label-md text-label-md text-text-primary font-bold truncate">
+                              {caso?.name ?? 'pendiente'}
+                            </span>
+                            <span className="font-label-sm text-[11px] text-text-secondary">
+                              {caso
+                                ? `${caso.appliances.length} aparatos · ${caso.hiddenProblems.length} consumos ocultos`
+                                : ''}
+                            </span>
+                          </div>
+
+                          <a
+                            href={url}
+                            className="font-label-sm text-[11px] text-accent-presupuesto break-all hover:underline"
+                          >
+                            {url}
+                          </a>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
             </div>
           </div>
         )}
+
 
         {/* EN JUEGO / CRISIS */}
         {(hostPhase === 'en_juego' || hostPhase === 'crisis') && state && (
@@ -430,6 +644,41 @@ function HostConsole() {
                 <span>DECISIONES REGISTRADAS {state.teams.reduce((acc, t) => acc + (state.answered[t.id]?.length ?? 0), 0)}</span>
               </div>
             </div>
+
+            {/* Equipo que llega con la partida empezada: el Host lo añade a mano. */}
+            {puedeAnadirEquipo && (
+              <div className="w-full bg-bg-surface border border-border-subtle rounded-xl px-4 py-2.5 flex flex-wrap items-center gap-3 shadow-md">
+                <span className="flex items-center gap-2 font-label-sm text-label-sm text-text-secondary uppercase tracking-wider">
+                  <span className="material-symbols-outlined text-[16px]">person_add</span>
+                  Equipo tardío
+                </span>
+                <input
+                  type="text"
+                  value={nuevoEquipo}
+                  onChange={(event) => setNuevoEquipo(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      void agregarEquipo();
+                    }
+                  }}
+                  maxLength={24}
+                  placeholder="Nombre del equipo que acaba de llegar"
+                  className="flex-1 min-w-[200px] h-10 px-3 rounded-lg bg-bg-primary border border-border-subtle outline-none font-label-md text-label-md text-text-primary placeholder:text-text-secondary/50 focus:border-accent-presupuesto"
+                />
+                <button
+                  type="button"
+                  disabled={busy || nuevoEquipo.trim().length < 2}
+                  onClick={() => void agregarEquipo()}
+                  className="h-10 px-4 rounded-lg border border-border-subtle bg-surface-container-low font-label-sm text-label-sm uppercase tracking-wider text-text-primary hover:border-accent-presupuesto disabled:opacity-50"
+                >
+                  Añadir a la partida
+                </button>
+                <span className="font-label-sm text-label-sm text-text-secondary">
+                  {equiposDentro} de {CASE_CATALOG.length} mesas
+                </span>
+              </div>
+            )}
 
             <NeighborhoodStage
               teams={state.teams}

@@ -6,6 +6,8 @@ SUPABASE_URL=https://tbwtphcydwhpeqmdfmlo.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=pega-aqui-la-service-role
 # Token compartido con la vista Host (cabecera x-host-token) y con NEXT_PUBLIC_HOST_TOKEN.
 HOST_TOKEN=cambia-este-token
+# Contraseña que se teclea al abrir la consola /host. Si se omite vale 9806.
+HOST_PASSCODE=9806
 # Solo para desarrollo local: permite acciones de host sin token.
 ALLOW_INSECURE_HOST=false
 ALLOWED_ORIGINS=*

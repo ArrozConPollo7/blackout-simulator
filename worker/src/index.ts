@@ -1,27 +1,33 @@
 /**
  * Cloudflare Worker — API del juego "Energia en Crisis".
  *
- * Endpoints (Fase 1.5):
- *   POST /game/start           crea partida + equipos desde content/cases.ts
+ * Endpoints:
+ *   POST /game/start           crea la partida (sin equipos: entran por /join)
+ *   POST /game/:id/join        alta de una mesa: {name} -> equipo + caso asignado
  *   GET  /game/:id/state       estado completo (reconexion)
  *   POST /game/:id/decision    {teamId, round, optionId} -> aplica applyDecision
  *   POST /game/:id/crisis      solo host: triggerCrisis + apertura de la fase de crisis
  *   POST /game/:id/phase       solo host: avanza lobby -> investigar -> ... -> resultados
+ *   POST /game/:id/teams       solo host: añade un equipo con la partida ya empezada
+ *   POST /host/verify          sondeo de la contraseña del Host (cabecera x-host-token)
  *   GET  /health               sonda de vida
  *
  * El Worker es la unica fuente de verdad: ningun cliente calcula consecuencias.
  */
 
 import type { Phase } from '../../types/game.ts';
-import type { DecisionRequest, StartGameRequest } from '../../types/api.ts';
+import type { DecisionRequest, JoinGameRequest, StartGameRequest } from '../../types/api.ts';
 import { ConfigError, readConfig, type Env } from './env.ts';
 import { SupabaseRepo, type GameRepo } from './repo.ts';
 import {
   changePhase,
   fireCrisis,
   getGameState,
+  hostAddTeam,
+  joinGame,
   startGame,
   submitDecision,
+  verifyHost,
   type ServiceDeps,
 } from './game-service.ts';
 import { ApiError, corsHeaders, errorResponse, jsonResponse, readJsonBody } from './http.ts';
@@ -29,12 +35,18 @@ import { ApiError, corsHeaders, errorResponse, jsonResponse, readJsonBody } from
 /** Dependencias construidas una vez por peticion. */
 export function buildDeps(env: Env, repo?: GameRepo): ServiceDeps {
   if (repo) {
-    return { repo, hostToken: env.HOST_TOKEN ?? null, allowInsecureHost: env.ALLOW_INSECURE_HOST === 'true' };
+    return {
+      repo,
+      hostToken: env.HOST_TOKEN ?? null,
+      hostPasscode: env.HOST_PASSCODE ?? undefined,
+      allowInsecureHost: env.ALLOW_INSECURE_HOST === 'true',
+    };
   }
   const config = readConfig(env);
   return {
     repo: new SupabaseRepo(config),
     hostToken: config.hostToken,
+    hostPasscode: config.hostPasscode,
     allowInsecureHost: config.allowInsecureHost,
   };
 }
@@ -60,13 +72,25 @@ export async function handleRequest(request: Request, env: Env, repo?: GameRepo)
       return jsonResponse(await startGame(deps, body), 201, cors);
     }
 
-    const match = path.match(/^\/game\/([^/]+)\/(state|decision|crisis|phase)$/);
+    if (path === '/host/verify' && request.method === 'POST') {
+      return jsonResponse(verifyHost(deps, request.headers.get('x-host-token')), 200, cors);
+    }
+
+    const match = path.match(/^\/game\/([^/]+)\/(state|decision|crisis|phase|join|teams)$/);
     if (match) {
       const [, gameId, action] = match;
       const hostToken = request.headers.get('x-host-token');
 
       if (action === 'state' && request.method === 'GET') {
         return jsonResponse(await getGameState(deps, gameId), 200, cors);
+      }
+      if (action === 'join' && request.method === 'POST') {
+        const body = await readJsonBody<JoinGameRequest>(request);
+        return jsonResponse(await joinGame(deps, gameId, body), 201, cors);
+      }
+      if (action === 'teams' && request.method === 'POST') {
+        const body = await readJsonBody<JoinGameRequest>(request);
+        return jsonResponse(await hostAddTeam(deps, gameId, body, hostToken), 201, cors);
       }
       if (action === 'decision' && request.method === 'POST') {
         const body = await readJsonBody<DecisionRequest>(request);

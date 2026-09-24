@@ -18,6 +18,8 @@ export interface ActiveGame {
   hostPath: string;
   updatedAt: number;
   teams: ActiveTeamLink[];
+  /** Equipos esperados (el Host elige 4-6 al crear la partida). */
+  slots?: number;
 }
 
 const KEY = 'eec:partida-activa';

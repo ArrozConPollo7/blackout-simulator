@@ -12,3 +12,4 @@ ALLOWED_ORIGINS = "https://juego.elpollitopio.me"
 # Secretos (nunca en este archivo):
 #   wrangler secret put SUPABASE_SERVICE_ROLE_KEY
 #   wrangler secret put HOST_TOKEN
+#   wrangler secret put HOST_PASSCODE      # contraseña del proyector; sin ella vale 9806

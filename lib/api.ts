@@ -8,6 +8,8 @@ import type {
   DecisionRequest,
   DecisionResponse,
   GameStateResponse,
+  HostVerifyResponse,
+  JoinGameResponse,
   PhaseResponse,
   StartGameRequest,
   StartGameResponse,
@@ -34,10 +36,26 @@ interface RequestOptions {
   body?: unknown;
   /** Acciones privilegiadas del Host: añade la cabecera x-host-token. */
   host?: boolean;
+  /** Credencial puntual (el sondeo de la contraseña antes de guardarla). */
+  hostToken?: string;
   signal?: AbortSignal;
 }
 
 const TIMEOUT_MS = 12000;
+
+/**
+ * Contraseña del Host de esta sesión del navegador. Vive en memoria + sessionStorage
+ * (`lib/host-auth.ts`), nunca en el bundle: la consola la pide al abrirse.
+ */
+let runtimeHostToken: string | null = null;
+
+export function setRuntimeHostToken(token: string | null): void {
+  runtimeHostToken = token && token.trim().length > 0 ? token.trim() : null;
+}
+
+export function getRuntimeHostToken(): string | null {
+  return runtimeHostToken ?? (env.hostToken || null);
+}
 
 async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
   if (!env.apiUrl) {
@@ -50,12 +68,14 @@ async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<
     options.signal.addEventListener('abort', () => controller.abort(), { once: true });
   }
 
+  const hostToken = options.hostToken ?? (options.host ? getRuntimeHostToken() : null);
+
   try {
     const response = await fetch(`${env.apiUrl}${path}`, {
       method: options.method ?? 'GET',
       headers: {
         'content-type': 'application/json',
-        ...(options.host && env.hostToken ? { 'x-host-token': env.hostToken } : {}),
+        ...(hostToken ? { 'x-host-token': hostToken } : {}),
       },
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
       signal: controller.signal,
@@ -89,6 +109,18 @@ export const api = {
   startGame: (body: StartGameRequest = {}) =>
     apiFetch<StartGameResponse>('/game/start', { method: 'POST', body, host: true }),
 
+  /** Sondeo de la contraseña del Host: el valor se prueba antes de guardarlo. */
+  verifyHost: (passcode: string) =>
+    apiFetch<HostVerifyResponse>('/host/verify', { method: 'POST', hostToken: passcode }),
+
+  /** Alta de una mesa desde el QR del proyector. */
+  joinGame: (gameId: string, name: string) =>
+    apiFetch<JoinGameResponse>(`/game/${gameId}/join`, { method: 'POST', body: { name } }),
+
+  /** Alta desde la consola del Host (equipo que llega con la partida empezada). */
+  addTeam: (gameId: string, name: string) =>
+    apiFetch<JoinGameResponse>(`/game/${gameId}/teams`, { method: 'POST', body: { name }, host: true }),
+
   getState: (gameId: string, signal?: AbortSignal) =>
     apiFetch<GameStateResponse>(`/game/${gameId}/state`, { signal }),
 
@@ -113,7 +145,11 @@ export function describeApiError(error: unknown): string {
       case 'network':
         return `No hay conexión con el Worker (${error.detail ?? 'error de red'}).`;
       case 'forbidden':
-        return 'Acción reservada al Host: falta o no coincide el token.';
+        return 'Acción reservada al Host: contraseña incorrecta o ausente.';
+      case 'name_taken':
+        return error.detail ?? 'Ese nombre de equipo ya está en uso: elegid otro.';
+      case 'game_full':
+        return error.detail ?? 'La partida ya tiene el máximo de equipos.';
       case 'already_decided':
         return 'Ese escenario ya fue decidido por el equipo.';
       case 'wrong_phase':

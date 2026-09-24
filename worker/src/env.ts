@@ -11,6 +11,12 @@ export interface Env {
   SUPABASE_SERVICE_ROLE_KEY: string;
   /** Token compartido con la vista Host para las acciones privilegiadas. */
   HOST_TOKEN?: string;
+  /**
+   * Contraseña que se teclea en el arranque de la consola del Host (pantalla grande).
+   * Si no se configura vale `9806` (guardia de aula, no un secreto fuerte: cualquiera
+   * que vea el proyector la conoce, pero evita que un equipo abra los controles).
+   */
+  HOST_PASSCODE?: string;
   /** Solo para desarrollo local: permite acciones de host sin token. */
   ALLOW_INSECURE_HOST?: string;
   /** Origenes permitidos separados por coma. Por defecto "*". */
@@ -21,9 +27,16 @@ export interface WorkerConfig {
   supabaseUrl: string;
   supabaseKey: string;
   hostToken: string | null;
+  hostPasscode: string;
   allowInsecureHost: boolean;
   allowedOrigins: string[];
 }
+
+/**
+ * Contraseña por defecto del Host cuando el Worker no define HOST_PASSCODE.
+ * Está a la vista a propósito: es un guardia de aula, no autenticación real.
+ */
+export const DEFAULT_HOST_PASSCODE = '9806';
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -42,10 +55,12 @@ export function readConfig(env: Env): WorkerConfig {
     );
   }
   const hostToken = (env.HOST_TOKEN ?? '').trim();
+  const hostPasscode = (env.HOST_PASSCODE ?? '').trim() || DEFAULT_HOST_PASSCODE;
   return {
     supabaseUrl,
     supabaseKey,
     hostToken: hostToken.length > 0 ? hostToken : null,
+    hostPasscode,
     allowInsecureHost: (env.ALLOW_INSECURE_HOST ?? '').toLowerCase() === 'true',
     allowedOrigins: (env.ALLOWED_ORIGINS ?? '*')
       .split(',')

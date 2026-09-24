@@ -7,7 +7,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { CrisisResponse, DecisionResponse, GameStateResponse, StartGameResponse } from '../types/api.ts';
+import type {
+  CrisisResponse,
+  DecisionResponse,
+  GameStateResponse,
+  JoinGameResponse,
+  StartGameResponse,
+} from '../types/api.ts';
 import { CASE_CATALOG } from '../content/cases.ts';
 import { OPTIONS_BY_ID, ROUND2_SCENARIOS } from '../content/decisions.ts';
 import { handleRequest } from '../worker/src/index.ts';
@@ -27,12 +33,20 @@ interface Harness {
   post: (path: string, body?: unknown, init?: RequestInit) => Promise<Response>;
   get: (path: string, init?: RequestInit) => Promise<Response>;
   start: (body?: unknown) => Promise<StartGameResponse>;
+  /** Alta directa por el endpoint público del QR (una mesa escribiendo su nombre). */
+  join: (gameId: string, name: string) => Promise<JoinGameResponse>;
 }
 
 function harness(env: Env = ENV): Harness {
   const repo = new InMemoryRepo();
   const call = (path: string, init: RequestInit) =>
     handleRequest(new Request(`https://api.test${path}`, init), env, repo);
+  const json = (path: string, body?: unknown) =>
+    call(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }) as Promise<Response>;
   return {
     repo,
     post: (path, body, init = {}) =>
@@ -43,16 +57,44 @@ function harness(env: Env = ENV): Harness {
         body: body === undefined ? undefined : JSON.stringify(body),
       }) as Promise<Response>,
     get: (path, init = {}) => call(path, { method: 'GET', ...init }) as Promise<Response>,
+    join: async (gameId, name) => harness_join(json, gameId, name),
+    /**
+     * Partida lista para jugar: crea la partida y mete N mesas por el endpoint real de
+     * registro (el mismo que usan los celulares al escanear el QR del proyector).
+     */
     start: async (body) => {
-      const res = await call('/game/start', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body ?? {}),
-      });
+      const peticion = (body ?? {}) as { teamCount?: number; cases?: string[] };
+      const res = await json('/game/start', body ?? {});
       assert.equal(res.status, 201);
-      return (await res.json()) as StartGameResponse;
+      const started = (await res.json()) as StartGameResponse;
+
+      const mesas = peticion.cases?.length ?? peticion.teamCount ?? CASE_CATALOG.length;
+      const teams: StartGameResponse['teams'] = [];
+      let state = started.state;
+      for (let i = 0; i < Math.min(mesas, CASE_CATALOG.length); i += 1) {
+        const joined = await harness_join(json, started.gameId, CASE_CATALOG[i].name);
+        teams.push({
+          id: joined.teamId,
+          name: joined.name,
+          caseId: joined.caseId,
+          color: joined.color,
+          playPath: joined.playPath,
+        });
+        state = joined.state;
+      }
+      return { ...started, teams, state };
     },
   };
+}
+
+async function harness_join(
+  json: (path: string, body?: unknown) => Promise<Response>,
+  gameId: string,
+  name: string,
+): Promise<JoinGameResponse> {
+  const res = await json(`/game/${gameId}/join`, { name });
+  assert.equal(res.status, 201, `join de "${name}"`);
+  return (await res.json()) as JoinGameResponse;
 }
 
 const host = (extra: Record<string, string> = {}) => ({ headers: { 'x-host-token': HOST_TOKEN, ...extra } });
@@ -68,31 +110,48 @@ async function stateOf(res: Response): Promise<GameStateResponse> {
 }
 
 describe('Worker — arranque de partida', () => {
-  it('POST /game/start crea la partida y los equipos desde content/cases.ts', async () => {
+  it('POST /game/start abre la partida en lobby y SIN equipos (entran por el QR)', async () => {
     const h = harness();
-    const started = await h.start();
+    const res = await h.post('/game/start', { teamCount: 4 });
+    assert.equal(res.status, 201);
+    const started = (await res.json()) as StartGameResponse;
 
     assert.equal(started.phase, 'lobby');
-    assert.equal(started.teams.length, CASE_CATALOG.length);
-    assert.deepEqual(
-      started.teams.map((t) => t.caseId),
-      CASE_CATALOG.map((c) => c.id),
-    );
+    assert.equal(started.slots, 4);
+    assert.deepEqual(started.teams, []);
     assert.equal(started.hostPath, `/host?game=${started.gameId}`);
-    for (const team of started.teams) {
-      assert.equal(team.playPath, `/play/${team.id}?game=${started.gameId}`);
-      assert.equal(new Set(started.teams.map((t) => t.color)).size, started.teams.length);
-    }
+    assert.equal(started.joinPath, `/join?game=${started.gameId}`);
+    assert.equal(started.state.teams.length, 0);
+    assert.equal(started.state.results, null);
+  });
+
+  it('cada mesa que entra con su nombre recibe el siguiente caso del catálogo', async () => {
+    const h = harness();
+    const creada = (await (await h.post('/game/start', { teamCount: 3 })).json()) as StartGameResponse;
+
+    const primera = await h.join(creada.gameId, 'Los Tigres');
+    const segunda = await h.join(creada.gameId, 'Chispas');
+    const tercera = await h.join(creada.gameId, 'Voltios');
+
+    assert.deepEqual(
+      [primera.caseId, segunda.caseId, tercera.caseId],
+      CASE_CATALOG.slice(0, 3).map((caso) => caso.id),
+    );
+    assert.equal(new Set([primera.color, segunda.color, tercera.color]).size, 3);
+    assert.equal(primera.playPath, `/play/${primera.teamId}?game=${creada.gameId}`);
+    assert.equal(tercera.state.teams.length, 3);
 
     // Todo equipo arranca con el estado del documento.
-    for (const team of started.state.teams) {
+    for (const team of tercera.state.teams) {
       assert.equal(team.electricidad, 100);
       assert.equal(team.gas, 100);
       assert.equal(team.presupuesto, 100000);
       assert.equal(team.eficiencia, 50);
       assert.equal(team.puntos, 0);
     }
-    assert.equal(started.state.results, null);
+    // El caso llega a la vista del equipo con sus consumos ocultos.
+    assert.deepEqual(tercera.state.cases[primera.teamId].hiddenProblems, CASE_CATALOG[0].hiddenProblems);
+    assert.equal(tercera.state.results, null);
   });
 
   it('acepta un numero de equipos menor al catalogo (4-6 del documento)', async () => {
@@ -164,13 +223,44 @@ describe('Worker — fases y permisos de host', () => {
     assert.equal((await res.json()).code, 'conflict');
   });
 
-  it('si el Worker no tiene HOST_TOKEN configurado, falla cerrado (503)', async () => {
+  it('sin HOST_TOKEN sigue fallando cerrado: nadie sin credencial abre una fase', async () => {
+    // Sin HOST_TOKEN queda la contraseña de anfitrión (por defecto 9806, ver HOST_PASSCODE):
+    // es un guardia de aula, no un secreto fuerte, así que la puerta sigue existiendo.
     const sinToken = { ...ENV, HOST_TOKEN: undefined };
     const h = harness(sinToken);
     const started = await h.start();
-    const res = await h.post(`/game/${started.gameId}/phase`, { phase: 'investigar' }, {
+
+    const ajeno = await h.post(`/game/${started.gameId}/phase`, { phase: 'investigar' }, {
       headers: { 'x-host-token': 'cualquiera' },
     });
+    assert.equal(ajeno.status, 403);
+    assert.equal((await ajeno.json()).code, 'forbidden');
+
+    const sinCabecera = await h.post(`/game/${started.gameId}/phase`, { phase: 'investigar' });
+    assert.equal(sinCabecera.status, 403);
+
+    const anfitrion = await h.post(
+      `/game/${started.gameId}/phase`,
+      { phase: 'investigar' },
+      { headers: { 'x-host-token': '9806' } },
+    );
+    assert.equal(anfitrion.status, 200);
+  });
+
+  it('con la credencial de host desactivada a propósito, el Worker no acepta nada (503)', async () => {
+    // Despliegue endurecido: `HOST_TOKEN=''` y `HOST_PASSCODE=''` no dejan ninguna
+    // credencial válida, así que la puerta se queda cerrada en vez de aceptar vacío.
+    const h = harness({ ...ENV, HOST_TOKEN: '', HOST_PASSCODE: undefined });
+    const started = await h.start();
+    const res = await handleRequest(
+      new Request(`https://api.test/game/${started.gameId}/phase`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-host-token': '' },
+        body: JSON.stringify({ phase: 'investigar' }),
+      }),
+      { ...ENV, HOST_TOKEN: '', HOST_PASSCODE: '' },
+      h.repo,
+    );
     assert.equal(res.status, 503);
     assert.equal((await res.json()).code, 'not_configured');
   });
@@ -524,5 +614,154 @@ describe('Worker — CORS y salud', () => {
     const body = await res.json();
     assert.equal(body.code, 'not_configured');
     assert.match(body.detail, /SUPABASE_URL/);
+  });
+});
+
+describe('Worker — registro de mesas y contraseña del Host', () => {
+  it('rechaza nombres vacíos, de un solo carácter o desmesurados', async () => {
+    const h = harness();
+    const creada = (await (await h.post('/game/start', {})).json()) as StartGameResponse;
+
+    for (const nombre of ['', ' ', 'A', 'x'.repeat(25), 42]) {
+      const res = await h.post(`/game/${creada.gameId}/join`, { name: nombre });
+      assert.equal(res.status, 400, `deberia rechazar ${JSON.stringify(nombre)}`);
+      assert.equal((await res.json()).code, 'bad_request');
+    }
+    // Un nombre válido con espacios de sobra se normaliza, no se rechaza.
+    const limpio = await h.join(creada.gameId, '  Los   Tigres  ');
+    assert.equal(limpio.name, 'Los Tigres');
+  });
+
+  it('rechaza un nombre ya usado en la partida', async () => {
+    const h = harness();
+    const creada = (await (await h.post('/game/start', {})).json()) as StartGameResponse;
+    await h.join(creada.gameId, 'Los Tigres');
+
+    const repetido = await h.post(`/game/${creada.gameId}/join`, { name: 'los tigres' });
+    assert.equal(repetido.status, 409);
+    assert.equal((await repetido.json()).code, 'name_taken');
+    assert.equal(h.repo.writes.teams, 1, 'el rechazo no debe crear nada');
+  });
+
+  it('cierra el registro público en cuanto la partida arranca', async () => {
+    const h = harness();
+    const started = await h.start({ teamCount: 4 });
+    await h.post(`/game/${started.gameId}/phase`, { phase: 'investigar' }, host());
+
+    const tarde = await h.post(`/game/${started.gameId}/join`, { name: 'Los Tigres' });
+    assert.equal(tarde.status, 409);
+    const body = await tarde.json();
+    assert.equal(body.code, 'wrong_phase');
+    assert.match(body.detail, /anfitrión|anfitrion/);
+  });
+
+  it('el Host sí puede añadir el equipo que llega tarde', async () => {
+    const h = harness();
+    const started = await h.start({ teamCount: 4 });
+    await h.post(`/game/${started.gameId}/phase`, { phase: 'investigar' }, host());
+
+    const sinCredencial = await h.post(`/game/${started.gameId}/teams`, { name: 'Rezagados' });
+    assert.equal(sinCredencial.status, 403);
+
+    const resp = await h.post(`/game/${started.gameId}/teams`, { name: 'Rezagados' }, host());
+    assert.equal(resp.status, 201);
+    const añadido = (await resp.json()) as JoinGameResponse;
+    assert.equal(añadido.name, 'Rezagados');
+    assert.equal(añadido.state.teams.length, started.teams.length + 1);
+    // El caso nuevo es el siguiente libre del catálogo, no uno repetido.
+    const usados = añadido.state.teams.map((t) => t.id);
+    assert.equal(new Set(usados).size, usados.length);
+    assert.equal(añadido.caseId, CASE_CATALOG[started.teams.length].id);
+  });
+
+  it('no admite más mesas que casos tiene el catálogo', async () => {
+    const h = harness();
+    const started = await h.start();
+    assert.equal(started.teams.length, CASE_CATALOG.length);
+
+    const sobrante = await h.post(`/game/${started.gameId}/join`, { name: 'Sobrante' });
+    assert.equal(sobrante.status, 409);
+    assert.equal((await sobrante.json()).code, 'game_full');
+  });
+
+  it('el sondeo de contraseña acepta la clave por defecto y el HOST_TOKEN, y rechaza el resto', async () => {
+    const h = harness();
+    const conPasscode = await handleRequest(
+      new Request('https://api.test/host/verify', {
+        method: 'POST',
+        headers: { 'x-host-token': '9806' },
+      }),
+      ENV,
+      h.repo,
+    );
+    assert.equal(conPasscode.status, 200);
+    assert.deepEqual(await conPasscode.json(), { ok: true, gameId: null });
+
+    const conToken = await handleRequest(
+      new Request('https://api.test/host/verify', {
+        method: 'POST',
+        headers: { 'x-host-token': HOST_TOKEN },
+      }),
+      ENV,
+      h.repo,
+    );
+    assert.equal(conToken.status, 200);
+
+    const mala = await handleRequest(
+      new Request('https://api.test/host/verify', {
+        method: 'POST',
+        headers: { 'x-host-token': '1234' },
+      }),
+      ENV,
+      h.repo,
+    );
+    assert.equal(mala.status, 403);
+
+    const sinCabecera = await handleRequest(
+      new Request('https://api.test/host/verify', { method: 'POST' }),
+      ENV,
+      h.repo,
+    );
+    assert.equal(sinCabecera.status, 403);
+  });
+
+  it('la contraseña de anfitrión también autoriza las acciones de la partida', async () => {
+    const h = harness();
+    const started = await h.start({ teamCount: 4 });
+    const comoAnfitrion = { headers: { 'x-host-token': '9806' } };
+
+    const fase = await h.post(`/game/${started.gameId}/phase`, { phase: 'investigar' }, comoAnfitrion);
+    assert.equal(fase.status, 200);
+    assert.equal((await fase.json()).state.phase, 'investigar');
+
+    const crisis = await h.post(`/game/${started.gameId}/crisis`, undefined, comoAnfitrion);
+    assert.equal(crisis.status, 409, 'la crisis solo se dispara al cerrar la ronda de decisiones');
+  });
+
+  it('una contraseña configurada en el Worker sustituye a la de fábrica', async () => {
+    const h = harness({ ...ENV, HOST_PASSCODE: 'mi-clave-de-clase' });
+    const creada = (await (await h.post('/game/start', {})).json()) as StartGameResponse;
+
+    const fabrica = await handleRequest(
+      new Request(`https://api.test/game/${creada.gameId}/phase`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-host-token': '9806' },
+        body: JSON.stringify({ phase: 'investigar' }),
+      }),
+      { ...ENV, HOST_PASSCODE: 'mi-clave-de-clase' },
+      h.repo,
+    );
+    assert.equal(fabrica.status, 403, 'la clave de fábrica deja de servir');
+
+    const propia = await handleRequest(
+      new Request(`https://api.test/game/${creada.gameId}/phase`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-host-token': 'mi-clave-de-clase' },
+        body: JSON.stringify({ phase: 'investigar' }),
+      }),
+      { ...ENV, HOST_PASSCODE: 'mi-clave-de-clase' },
+      h.repo,
+    );
+    assert.equal(propia.status, 200);
   });
 });

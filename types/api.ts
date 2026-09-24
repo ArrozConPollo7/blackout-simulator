@@ -41,6 +41,12 @@ export interface StartGameRequest {
 export interface StartGameResponse {
   gameId: string;
   phase: Phase;
+  /**
+   * Equipos que se esperan en esta partida (4-6). Es presentacional: los equipos
+   * reales nacen cuando cada mesa entra por `/join` y escribe su nombre.
+   */
+  slots: number;
+  /** Vacío al crear la partida: los equipos entran por POST /game/:id/join. */
   teams: Array<{
     id: string;
     name: string;
@@ -50,7 +56,32 @@ export interface StartGameResponse {
   }>;
   /** Ruta del Host con el id de partida ya incorporado. */
   hostPath: string;
+  /** Ruta de registro que viaja en el QR del proyector. */
+  joinPath: string;
   state: GameStateResponse;
+}
+
+/** Alta de un equipo (mesa) en la partida. El nombre lo escribe el propio equipo. */
+export interface JoinGameRequest {
+  name: string;
+}
+
+export interface JoinGameResponse {
+  gameId: string;
+  teamId: string;
+  name: string;
+  caseId: string;
+  color: string;
+  /** Ruta de la vista del equipo, lista para redirigir. */
+  playPath: string;
+  state: GameStateResponse;
+}
+
+/** Sondeo de la contraseña del Host antes de abrir la consola. */
+export interface HostVerifyResponse {
+  ok: true;
+  /** Ruta del Host de la última partida, si el Worker la conoce. */
+  gameId: string | null;
 }
 
 export interface DecisionRequest {
@@ -87,6 +118,8 @@ export interface ApiErrorBody {
     | 'forbidden'
     | 'wrong_phase'
     | 'already_decided'
+    | 'name_taken'
+    | 'game_full'
     | 'not_configured'
     | 'internal';
   detail?: string;

@@ -8,14 +8,18 @@
  * se muestra con el estado que devuelve el Worker.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
+import AnimatedNumber from '@/components/play/AnimatedNumber';
+import SoundToggle from '@/components/SoundToggle';
 import { APPLIANCE_BY_ID, ROUND2B_SCENARIOS, ROUND2_SCENARIOS } from '@/content/decisions';
 import { PRESUPUESTO_INICIAL } from '@/content/economy';
 import { PHASE_BY_NAME } from '@/content/phases';
 import type { ApplianceProfile, DecisionScenario } from '@/content/decisions';
 import type { DecisionEffect, TeamState } from '@/types/game';
+import type { GameStateResponse } from '@/types/api';
 import { api, describeApiError } from '@/lib/api';
+import { useAudioEvent } from '@/lib/audio';
 import { missingConfig } from '@/lib/env';
 import { resolveGameId } from '@/lib/game-store';
 import { useGameState, useRemainingMs } from '@/lib/useGameState';
@@ -39,12 +43,31 @@ interface Feedback {
   scenarioKey: string;
 }
 
+/**
+ * ¿Quedó la ronda de decisiones sin situaciones pendientes? Se usa solo para elegir el
+ * sonido (acorde de resolución en vez de confirmación): la verdad sigue siendo del Worker.
+ */
+function rondaCompleta(
+  state: GameStateResponse,
+  round: 'decidir' | 'decidir_2',
+  teamId: string,
+): boolean {
+  const escenarios = round === 'decidir_2' ? ROUND2B_SCENARIOS : ROUND2_SCENARIOS;
+  if (escenarios.length === 0) return false;
+  const contestadas = state.answered[teamId] ?? [];
+  return escenarios.every((escenario) =>
+    contestadas.includes(round === 'decidir_2' ? 'r2b' : `r2:${escenario.id}`),
+  );
+}
+
 export default function PlayerPage({ params }: { params: { teamId: string } }) {
   const teamId = params.teamId;
   const [gameId, setGameId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Cada fallo sube el contador: así la sacudida del aviso se repite aunque el texto sea igual. */
+  const [errorNonce, setErrorNonce] = useState(0);
   const [openAppliance, setOpenAppliance] = useState<string | null>(null);
 
   useEffect(() => {
@@ -60,8 +83,50 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
   const phase = state?.phase;
   const remaining = useRemainingMs(state?.timerEndsAt ?? null, phase, connection.clockSkewMs);
 
+  const playEvent = useAudioEvent();
+  const lastPhaseRef = useRef<string | null>(null);
+  const timeWarnedRef = useRef(false);
+  const lastTelemetryRef = useRef(0);
+  /** El cronómetro solo se pone rojo y pulsa cuando de verdad queda poco. */
+  const timerCritical = remaining !== null && remaining <= 30000;
+
+  // Cambio de fase: relé al abrir ronda, alarma al entrar en crisis, fanfarria al cerrar.
+  useEffect(() => {
+    if (!phase || lastPhaseRef.current === phase) return;
+    const previous = lastPhaseRef.current;
+    lastPhaseRef.current = phase;
+    if (previous === null) return; // primera carga: nadie ha pedido sonido todavía
+    if (phase === 'crisis') playEvent('crisis');
+    else if (phase === 'resultados') playEvent('podium');
+    else playEvent('phase');
+  }, [phase, playEvent]);
+
+  // Aviso de tiempo bajo: tic doble, una sola vez por tramo.
+  useEffect(() => {
+    if (remaining === null) {
+      timeWarnedRef.current = false;
+      return;
+    }
+    if (remaining > 25000) timeWarnedRef.current = false;
+    if (remaining > 0 && remaining <= 20000 && !timeWarnedRef.current) {
+      timeWarnedRef.current = true;
+      playEvent('timeLow');
+    }
+  }, [remaining, playEvent]);
+
+  // Blip de telemetría al sincronizar con el Worker, con freno para no ser un metrónomo.
+  const lastSyncAt = connection.lastSyncAt;
+  useEffect(() => {
+    if (!lastSyncAt) return;
+    const now = Date.now();
+    if (now - lastTelemetryRef.current < 20000) return;
+    lastTelemetryRef.current = now;
+    playEvent('telemetry');
+  }, [lastSyncAt, playEvent]);
+
   const decidir = async (optionId: string, scenarioKey: string, round: 'investigar' | 'decidir' | 'decidir_2') => {
     if (!state) return;
+    playEvent('click');
     setPending(optionId);
     setError(null);
     try {
@@ -70,8 +135,13 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
       setFeedback({ text: respuesta.feedback, effect: respuesta.effect, scenarioKey });
       connection.applyState(respuesta.state);
       setOpenAppliance(null);
+      // Confirmación; si con esta decisión queda la ronda completa, acorde de resolución.
+      const completa = round !== 'investigar' && rondaCompleta(respuesta.state, round, teamId);
+      playEvent(completa ? 'resolve' : 'confirm');
     } catch (cause) {
+      playEvent('deny');
       setError(describeApiError(cause));
+      setErrorNonce((n) => n + 1);
     } finally {
       setPending(null);
     }
@@ -150,14 +220,29 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
                 </span>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-bg-primary border border-border-subtle">
-                  <span className="material-symbols-outlined text-[14px] text-accent-electricidad">
+                <div
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded bg-bg-primary border ${
+                    timerCritical
+                      ? 'border-accent-crisis/60 anim-pulse-urgent'
+                      : 'border-border-subtle'
+                  }`}
+                >
+                  <span
+                    className={`material-symbols-outlined text-[14px] ${
+                      timerCritical ? 'text-accent-crisis' : 'text-accent-electricidad'
+                    }`}
+                  >
                     timer
                   </span>
-                  <span className="font-label-md text-label-md text-accent-electricidad font-bold tabular-nums">
+                  <span
+                    className={`font-label-md text-label-md font-bold tabular-nums ${
+                      timerCritical ? 'text-accent-crisis' : 'text-accent-electricidad'
+                    }`}
+                  >
                     {formatRemaining(remaining)}
                   </span>
                 </div>
+                <SoundToggle className="shrink-0" />
                 <span
                   className="material-symbols-outlined text-[18px] text-text-secondary"
                   title={realtimeLabel(connection.realtime)}
@@ -167,11 +252,39 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
               </div>
             </div>
 
-            <div className="grid grid-cols-4 gap-1.5 pt-0.5">
-              <Badge icono="bolt" etiqueta="Elec" valor={team ? `${formatNumber(team.electricidad, 1)}k` : '—'} color="text-accent-electricidad" />
-              <Badge icono="local_fire_department" etiqueta="Gas" valor={team ? m3(team.gas) : '—'} color="text-accent-gas" />
-              <Badge icono="account_balance_wallet" etiqueta="Ppto" valor={team ? `${Math.round(team.presupuesto / 1000)}k` : '—'} color="text-accent-presupuesto" />
-              <Badge icono="speed" etiqueta="Efic" valor={team ? `${team.eficiencia}%` : '—'} color="text-accent-eficiencia" />
+            <div className="grid grid-cols-4 gap-1.5 pt-0.5 anim-stagger">
+              <Badge
+                icono="bolt"
+                etiqueta="Elec"
+                color="text-accent-electricidad"
+                valor={team ? `${formatNumber(team.electricidad, 1)}k` : '—'}
+                numero={team?.electricidad}
+                formato={(valor) => `${formatNumber(valor, 1)}k`}
+              />
+              <Badge
+                icono="local_fire_department"
+                etiqueta="Gas"
+                color="text-accent-gas"
+                valor={team ? m3(team.gas) : '—'}
+                numero={team?.gas}
+                formato={m3}
+              />
+              <Badge
+                icono="account_balance_wallet"
+                etiqueta="Ppto"
+                color="text-accent-presupuesto"
+                valor={team ? `${Math.round(team.presupuesto / 1000)}k` : '—'}
+                numero={team?.presupuesto}
+                formato={(valor) => `${Math.round(valor / 1000)}k`}
+              />
+              <Badge
+                icono="speed"
+                etiqueta="Efic"
+                color="text-accent-eficiencia"
+                valor={team ? `${formatNumber(team.eficiencia, 0)}%` : '—'}
+                numero={team?.eficiencia}
+                formato={(valor) => `${formatNumber(valor, 0)}%`}
+              />
             </div>
           </div>
         </header>
@@ -183,7 +296,10 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
             </p>
           )}
           {error && (
-            <p className="rounded-lg border border-accent-crisis/50 bg-accent-crisis/10 px-3 py-2 font-label-sm text-label-sm">
+            <p
+              key={errorNonce}
+              className="rounded-lg border border-accent-crisis/50 bg-accent-crisis/10 px-3 py-2 font-label-sm text-label-sm anim-shake"
+            >
               {error}
             </p>
           )}
@@ -201,21 +317,24 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
 
           {/* RONDA 1 — INVESTIGAR */}
           {rondaActual === 'investigar' && (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-4 anim-fade">
               <Encabezado
                 titulo="Auditoría de aparatos"
                 ayuda="Toca un aparato para ver su ficha técnica y decidir qué hacer con su consumo."
               />
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3 anim-stagger">
                 {appliances.map((app) => {
                   const yaResuelto = answered.includes(`r1:${app.id}`);
                   return (
                     <button
                       key={app.id}
                       type="button"
-                      onClick={() => setOpenAppliance(openAppliance === app.id ? null : app.id)}
-                      className={`p-3 rounded-xl bg-bg-surface border text-left flex flex-col justify-between min-h-[104px] transition-all active:scale-95 ${
+                      onClick={() => {
+                        playEvent('click');
+                        setOpenAppliance(openAppliance === app.id ? null : app.id);
+                      }}
+                      className={`p-3 rounded-xl bg-bg-surface border text-left flex flex-col justify-between min-h-[104px] anim-tactile ${
                         openAppliance === app.id
                           ? 'border-accent-presupuesto ring-1 ring-accent-presupuesto'
                           : 'border-border-subtle'
@@ -253,13 +372,15 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
                 />
               )}
 
-              {feedback?.scenarioKey.startsWith('r1:') && <FeedbackCard feedback={feedback} />}
+              {feedback?.scenarioKey.startsWith('r1:') && (
+                <FeedbackCard key={`${feedback.scenarioKey}:${feedback.text}`} feedback={feedback} />
+              )}
             </div>
           )}
 
           {/* RONDA 2 Y 2b — DECIDIR */}
           {(rondaActual === 'decidir' || rondaActual === 'decidir_2') && (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-4 anim-fade">
               <Encabezado
                 titulo={rondaActual === 'decidir_2' ? 'Últimas decisiones bajo crisis' : 'Situaciones del día'}
                 ayuda="Cada situación tiene tres opciones. El resultado exacto lo calcula el Worker."
@@ -271,24 +392,26 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
                 round={rondaActual}
                 onDecide={decidir}
               />
-              {feedback && !feedback.scenarioKey.startsWith('r1:') && <FeedbackCard feedback={feedback} />}
+              {feedback && !feedback.scenarioKey.startsWith('r1:') && (
+                <FeedbackCard key={`${feedback.scenarioKey}:${feedback.text}`} feedback={feedback} />
+              )}
             </div>
           )}
 
           {/* CRISIS */}
           {phase === 'crisis' && (
-            <div className="flex flex-col gap-4">
-              <div className="relative overflow-hidden rounded-xl bg-error-container/30 p-4 shadow-xl border border-accent-crisis">
-                <div className="relative flex flex-col gap-2.5">
+            <div className="flex flex-col gap-4 anim-fade">
+              <div className="relative overflow-hidden rounded-xl bg-error-container/30 p-4 shadow-xl border border-accent-crisis anim-glitch anim-scanline">
+                <div className="relative z-10 flex flex-col gap-2.5">
                   <div className="flex items-center justify-between">
-                    <span className="px-2 py-0.5 rounded bg-accent-crisis text-white font-label-sm text-label-sm font-bold uppercase tracking-wider animate-pulse">
+                    <span className="px-2 py-0.5 rounded bg-accent-crisis text-white font-label-sm text-label-sm font-bold uppercase tracking-wider anim-pulse-urgent">
                       ¡ALERTA DE CRISIS!
                     </span>
                     <span className="font-label-md text-label-md text-accent-crisis font-bold tabular-nums">
                       {formatRemaining(remaining)}
                     </span>
                   </div>
-                  <h1 className="font-headline-md text-headline-md text-text-primary uppercase font-bold tracking-tight">
+                  <h1 className="font-headline-md text-headline-md text-text-primary uppercase font-bold tracking-tight anim-flicker">
                     El precio de la electricidad subió 30%
                   </h1>
                   <p className="font-body-sm text-body-sm text-text-secondary">
@@ -336,7 +459,7 @@ function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-xl bg-bg-surface border border-border-subtle p-5 flex flex-col gap-3">
+    <section className="rounded-xl bg-bg-surface border border-border-subtle p-5 flex flex-col gap-3 anim-rise">
       <div className="flex items-center gap-2">
         <span className="material-symbols-outlined text-[22px] text-accent-presupuesto">{icono}</span>
         <h1 className="font-headline-md text-headline-md font-bold uppercase tracking-tight">
@@ -353,11 +476,16 @@ function Badge({
   etiqueta,
   valor,
   color,
+  numero,
+  formato,
 }: {
   icono: string;
   etiqueta: string;
   valor: string;
   color: string;
+  /** Número real del KPI: si llega, el valor se anima en vez de saltar. */
+  numero?: number;
+  formato?: (value: number) => string;
 }) {
   return (
     <div className="flex items-center gap-1 px-1.5 py-1 rounded bg-bg-primary/80 border border-border-subtle">
@@ -367,7 +495,11 @@ function Badge({
           {etiqueta}
         </span>
         <span className="font-label-sm text-[11px] text-text-primary truncate font-bold leading-tight tabular-nums">
-          {valor}
+          {numero !== undefined && formato ? (
+            <AnimatedNumber value={numero} format={formato} />
+          ) : (
+            valor
+          )}
         </span>
       </div>
     </div>
@@ -391,7 +523,7 @@ function Encabezado({ titulo, ayuda }: { titulo: string; ayuda: string }) {
 function FeedbackCard({ feedback }: { feedback: Feedback }) {
   const { effect } = feedback;
   return (
-    <section className="rounded-xl border border-accent-eficiencia/40 bg-accent-eficiencia/10 p-4 flex flex-col gap-2">
+    <section className="rounded-xl border border-accent-eficiencia/40 bg-accent-eficiencia/10 p-4 flex flex-col gap-2 anim-slide-in anim-flash-ok">
       <div className="flex items-center gap-2">
         <span className="material-symbols-outlined text-[20px] text-accent-eficiencia">
           check_circle
@@ -403,8 +535,10 @@ function FeedbackCard({ feedback }: { feedback: Feedback }) {
       <p className="font-body-md text-body-md text-text-primary">{feedback.text}</p>
       <div className="flex flex-wrap gap-3 font-label-sm text-label-sm text-text-secondary">
         {effect.electricidad !== undefined && (
-          <span>
-            ⚡{' '}
+          <span className="flex items-center gap-1">
+            <span className="material-symbols-outlined text-[14px] text-accent-electricidad">
+              bolt
+            </span>
             <strong className={effect.electricidad <= 0 ? 'text-accent-eficiencia' : 'text-accent-gas'}>
               {effect.electricidad > 0 ? '+' : ''}
               {kwh(effect.electricidad)}
@@ -412,8 +546,10 @@ function FeedbackCard({ feedback }: { feedback: Feedback }) {
           </span>
         )}
         {effect.gas !== undefined && effect.gas !== 0 && (
-          <span>
-            🔥{' '}
+          <span className="flex items-center gap-1">
+            <span className="material-symbols-outlined text-[14px] text-accent-gas">
+              local_fire_department
+            </span>
             <strong className={effect.gas <= 0 ? 'text-accent-eficiencia' : 'text-accent-gas'}>
               {effect.gas > 0 ? '+' : ''}
               {m3(effect.gas)}
@@ -421,13 +557,18 @@ function FeedbackCard({ feedback }: { feedback: Feedback }) {
           </span>
         )}
         {effect.presupuesto !== undefined && (
-          <span>
-            💰 <strong className="text-accent-presupuesto">{dinero(effect.presupuesto)}</strong>
+          <span className="flex items-center gap-1">
+            <span className="material-symbols-outlined text-[14px] text-accent-presupuesto">
+              account_balance_wallet
+            </span>
+            <strong className="text-accent-presupuesto">{dinero(effect.presupuesto)}</strong>
           </span>
         )}
         {effect.eficiencia !== undefined && effect.eficiencia !== 0 && (
-          <span>
-            🌱{' '}
+          <span className="flex items-center gap-1">
+            <span className="material-symbols-outlined text-[14px] text-accent-eficiencia">
+              speed
+            </span>
             <strong className={effect.eficiencia > 0 ? 'text-accent-eficiencia' : 'text-accent-gas'}>
               {effect.eficiencia > 0 ? '+' : ''}
               {formatNumber(effect.eficiencia, 2)} %
@@ -451,7 +592,7 @@ function FichaAparato({
   onDecide: (optionId: string) => void;
 }) {
   return (
-    <section className="rounded-xl bg-surface-container border border-border-subtle shadow-xl flex flex-col gap-3 p-4">
+    <section className="rounded-xl bg-surface-container border border-border-subtle shadow-xl flex flex-col gap-3 p-4 anim-slide-in">
       <div className="flex items-center justify-between pb-2 border-b border-border-subtle">
         <div className="flex items-center gap-2">
           <span className="material-symbols-outlined text-[20px] text-accent-presupuesto">
@@ -480,7 +621,7 @@ function FichaAparato({
           Este aparato ya fue atendido.
         </p>
       ) : (
-        <div className="flex flex-col gap-2.5">
+        <div className="flex flex-col gap-2.5 anim-stagger">
           <span className="font-label-sm text-label-sm text-text-secondary uppercase tracking-wider">
             ¿Qué hace tu equipo con este aparato?
           </span>
@@ -492,7 +633,7 @@ function FichaAparato({
                 type="button"
                 disabled={pending !== null}
                 onClick={() => onDecide(option.id)}
-                className="min-h-[48px] p-3.5 rounded-xl border border-border-subtle bg-bg-surface text-left flex flex-col gap-1.5 active:scale-[0.98] transition-all disabled:opacity-60"
+                className="min-h-[48px] p-3.5 rounded-xl border border-border-subtle bg-bg-surface text-left flex flex-col gap-1.5 anim-tactile disabled:opacity-60"
               >
                 <span className="font-label-md text-label-md font-bold text-text-primary">
                   {option.label}
@@ -515,11 +656,33 @@ function FichaAparato({
   );
 }
 
-function Dato({ etiqueta, valor, color }: { etiqueta: string; valor: string; color: string }) {
+function Dato({
+  etiqueta,
+  valor,
+  color,
+  numero,
+  formato,
+  contarDesdeCero = false,
+}: {
+  etiqueta: string;
+  valor: string;
+  color: string;
+  /** Número real: si llega, se anima al aparecer (contador incremental). */
+  numero?: number;
+  formato?: (value: number) => string;
+  /** Revelado contando desde cero (pantalla de resultados). */
+  contarDesdeCero?: boolean;
+}) {
   return (
     <div className="bg-surface-container-lowest p-2 rounded">
       <span className="text-text-secondary text-[10px] uppercase block">{etiqueta}</span>
-      <span className={`font-bold ${color}`}>{valor}</span>
+      <span className={`font-bold tabular-nums ${color}`}>
+        {numero !== undefined && formato ? (
+          <AnimatedNumber value={numero} format={formato} contarDesdeCero={contarDesdeCero} />
+        ) : (
+          valor
+        )}
+      </span>
     </div>
   );
 }
@@ -561,7 +724,7 @@ function ListaEscenarios({
       )}
 
       {pendientes.slice(0, 1).map((escenario) => (
-        <div key={escenario.id} className="flex flex-col gap-3">
+        <div key={escenario.id} className="flex flex-col gap-3 anim-rise">
           <section className="flex flex-col gap-2 p-4 rounded-xl bg-bg-surface border border-border-subtle shadow-md">
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-container-high w-fit">
               <span className="material-symbols-outlined text-[14px] text-accent-electricidad">
@@ -577,7 +740,7 @@ function ListaEscenarios({
             <p className="font-body-sm text-body-sm text-text-secondary">{escenario.prompt}</p>
           </section>
 
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 anim-stagger">
             {escenario.options.map((option) => {
               const hint = impactHint(option.effect);
               return (
@@ -586,7 +749,7 @@ function ListaEscenarios({
                   type="button"
                   disabled={pending !== null}
                   onClick={() => void onDecide(option.id, clave(escenario.id), round)}
-                  className="min-h-[58px] p-3.5 rounded-xl border border-border-subtle bg-bg-surface text-left flex flex-col gap-2 active:scale-[0.98] transition-all disabled:opacity-60"
+                  className="min-h-[58px] p-3.5 rounded-xl border border-border-subtle bg-bg-surface text-left flex flex-col gap-2 anim-tactile disabled:opacity-60"
                 >
                   <span className="font-label-md text-label-md font-bold text-text-primary">
                     {option.label}
@@ -627,26 +790,72 @@ function Resultados({
 }) {
   const mejorQuePromedio = promedioConsumo !== null && team.electricidad <= promedioConsumo;
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 anim-fade">
       <section className="rounded-xl bg-bg-surface border border-border-subtle p-5 flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <h1 className="font-headline-md text-headline-md font-bold uppercase">Resultado final</h1>
-          <span className="font-metric-display-mobile text-metric-display-mobile text-accent-eficiencia font-bold tabular-nums">
+          {/* Revelado del puesto: entra después de las tarjetas, no al mismo tiempo. */}
+          <span
+            className="font-metric-display-mobile text-metric-display-mobile text-accent-eficiencia font-bold tabular-nums anim-reveal"
+            style={{ animationDelay: '200ms' }}
+          >
             {puesto ? `#${puesto}` : '—'}
             <span className="text-[14px] text-text-secondary">/{total ?? '—'}</span>
           </span>
         </div>
-        <div className="grid grid-cols-2 gap-2 font-label-sm">
-          <Dato etiqueta="Electricidad" valor={kwh(team.electricidad)} color="text-accent-electricidad" />
-          <Dato etiqueta="Gas" valor={m3(team.gas)} color="text-accent-gas" />
-          <Dato etiqueta="Presupuesto" valor={dinero(team.presupuesto)} color="text-accent-presupuesto" />
-          <Dato etiqueta="Eficiencia" valor={`${formatNumber(team.eficiencia, 0)} %`} color="text-accent-eficiencia" />
-          <Dato etiqueta="Gasto" valor={dinero(PRESUPUESTO_INICIAL - team.presupuesto)} color="text-text-primary" />
-          <Dato etiqueta="Puntos" valor={String(puntos)} color="text-accent-eficiencia" />
+        <div className="grid grid-cols-2 gap-2 font-label-sm anim-stagger">
+          <Dato
+            etiqueta="Electricidad"
+            valor={kwh(team.electricidad)}
+            color="text-accent-electricidad"
+            numero={team.electricidad}
+            formato={kwh}
+            contarDesdeCero
+          />
+          <Dato
+            etiqueta="Gas"
+            valor={m3(team.gas)}
+            color="text-accent-gas"
+            numero={team.gas}
+            formato={m3}
+            contarDesdeCero
+          />
+          <Dato
+            etiqueta="Presupuesto"
+            valor={dinero(team.presupuesto)}
+            color="text-accent-presupuesto"
+            numero={team.presupuesto}
+            formato={dinero}
+            contarDesdeCero
+          />
+          <Dato
+            etiqueta="Eficiencia"
+            valor={`${formatNumber(team.eficiencia, 0)} %`}
+            color="text-accent-eficiencia"
+            numero={team.eficiencia}
+            formato={(valor) => `${formatNumber(valor, 0)} %`}
+            contarDesdeCero
+          />
+          <Dato
+            etiqueta="Gasto"
+            valor={dinero(PRESUPUESTO_INICIAL - team.presupuesto)}
+            color="text-text-primary"
+            numero={PRESUPUESTO_INICIAL - team.presupuesto}
+            formato={dinero}
+            contarDesdeCero
+          />
+          <Dato
+            etiqueta="Puntos"
+            valor={String(puntos)}
+            color="text-accent-eficiencia"
+            numero={puntos}
+            formato={(valor) => String(Math.round(valor))}
+            contarDesdeCero
+          />
         </div>
       </section>
 
-      <section className="rounded-xl bg-surface-container border border-border-subtle p-4 flex flex-col gap-2">
+      <section className="rounded-xl bg-surface-container border border-border-subtle p-4 flex flex-col gap-2 anim-rise">
         <h2 className="font-label-md text-label-md font-bold uppercase text-text-secondary">
           Comparación con el aula
         </h2>

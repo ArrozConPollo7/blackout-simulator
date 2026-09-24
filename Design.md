@@ -8,7 +8,7 @@ Sistema de diseño de referencia para las vistas Host y Player. Esto es lo que a
 
 - **Centro de control real, no juego infantil.** Estética SCADA/telemetría industrial: precisión, densidad controlada, sin decoración gratuita.
 - **Cero emojis.** Solo íconos de línea monocromáticos, consistentes en tamaño y grosor de trazo.
-- **Cero datos inventados.** Cada número en pantalla corresponde a una variable real del motor de juego (ver `documento-proyecto-energia-en-crisis.md`, sección 5). Nada de IDs de sesión, latencias, QR, "operadores" decorativos.
+- **Cero datos inventados.** Cada número en pantalla corresponde a una variable real del motor de juego (ver `documento-proyecto-energia-en-crisis.md`, sección 5). Nada de IDs de sesión, latencias, voltajes ni "operadores" decorativos. **Excepción explícita: el QR del lobby** (Fase 3), que no es adorno sino el canal de entrada de las mesas: codifica `/join?game=…`, y sin él nadie puede registrarse. Un elemento gráfico solo se permite si hace trabajo real.
 - **Densidad controlada.** Máximo 3 bloques de información primaria visibles a la vez por pantalla.
 - **Consistencia entre estados.** Lobby, En Juego, Crisis y Resultados comparten header, tipografía y componentes de tarjeta — son la misma app, no pantallas de sistemas distintos.
 
@@ -107,14 +107,52 @@ Esa imagen es referencia de dirección de arte, no algo replicable literalmente 
 
 ## 7. Estados de pantalla (Host)
 
-1. **Lobby** — lista de equipos conectándose + botón "Iniciar juego"
-2. **En juego** — vecindario 3D + franja de ranking/KPIs + timer
-3. **Crisis** — overlay de alerta, vecindario en modo rojo
-4. **Resultados** — podio + KPIs finales + mensaje educativo de cierre
+1. **Acceso** — la consola se abre con la contraseña de anfitrión (guarda en `sessionStorage`); el proyector es público, los controles no.
+2. **Lobby** — QR de registro de mesas + contador `n/slots` + botón "Iniciar juego" (deshabilitado hasta que entre al menos una mesa).
+3. **En juego** — vecindario 3D + franja de ranking/KPIs + timer
+4. **Crisis** — overlay de alerta, vecindario en modo rojo
+5. **Resultados** — podio + KPIs finales + mensaje educativo de cierre
 
 ## 8. Estados de pantalla (Player)
 
-1. **Investigar** — grid de tarjetas de electrodomésticos
-2. **Decidir** — escenario + 3 opciones apiladas
-3. **Crisis** (interrupción) — banner de alerta a pantalla completa
-4. **Resultados** — posición final + comparación contra el promedio del aula
+1. **Registro** (`/join`) — nombre del equipo; si el celular ya entró, "continuar con ese equipo"
+2. **Investigar** — grid de tarjetas de electrodomésticos
+3. **Decidir** — escenario + 3 opciones apiladas
+4. **Crisis** (interrupción) — banner de alerta a pantalla completa
+5. **Resultados** — posición final + comparación contra el promedio del aula
+
+---
+
+## 9. Movimiento y sonido (Fase 3)
+
+### Lenguaje de movimiento
+
+- **Todo movimiento comunica estado, nunca decora.** Si una animación no se puede explicar en
+  una frase ("esto parpadea porque la red está en crisis"), no entra.
+- **Interpolación exponencial, no saltos**: en 3D, `1 - Math.exp(-delta * k)`; en CSS,
+  `transform`/`opacity` con `animation`. Nunca `setState` dentro de un bucle de render.
+- **Duraciones y curvas**: entradas de 220-420 ms con `cubic-bezier(0.2, 0.8, 0.2, 1)`;
+  pulsos lentos (1.6-2.6 s) para lo ambiental; nada de rebotes ni de "juguete".
+- **Presupuesto de movimiento**: en el proyector no conviven más de dos animaciones continuas
+  (crisis + líder), y el resto son transiciones finitas. El modo ligero del proyecto
+  (`?lite=1`) sigue mandando sobre cualquier efecto.
+- **`prefers-reduced-motion: reduce`** desactiva las animaciones decorativas en las dos vistas.
+- El feedback de una decisión aparece **después** de la respuesta del Worker (nunca antes),
+  con un destello verde y deslizamiento: la interfaz no anticipa el resultado del motor.
+
+### Lenguaje de sonido
+
+- **Estética de subestación, no de videojuego arcade**: tonos cortos, secos, con filtro
+  paso-bajo, sin melodías largas ni samples. Sintetizado con Web Audio (`lib/audio.ts`); el
+  proyecto no empaqueta archivos de audio.
+- **Arranca en silencio.** El sonido es opcional y el Host lo enciende con el botón de sonido
+  (el `AudioContext` solo se desbloquea en un gesto del usuario). La preferencia se recuerda.
+- **Volumen contenido**: un `GainNode` maestro limita la suma; el sonido acompaña al aula, no
+  compite con la voz de los equipos.
+- Cada evento tiene un motivo distinto: `confirm` para una acción aceptada, `deny` para un
+  rechazo, `crisis` (sirena + caída de tensión) solo cuando el evento sorpresa entra en escena,
+  `podium` para el cierre. Repetir el mismo tono para todo convierte la información en ruido.
+- Nunca se usa el sonido para castigar un toque torpe en la vista Player: los toques que solo
+  abren una ficha suenan igual que cualquier otro (`click`). Solo el **rechazo del motor**
+  (decisión repetida, fase equivocada) lleva su tono bajo y corto (`deny`), porque ahí sí hay
+  información que la mesa necesita.

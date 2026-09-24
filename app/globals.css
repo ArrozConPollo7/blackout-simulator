@@ -33,3 +33,211 @@
   -webkit-font-feature-settings: 'liga';
   -webkit-font-smoothing: antialiased;
 }
+
+/* ==========================================================================
+   Energía en Crisis — animaciones de interfaz (estética SCADA / CRT)
+   --------------------------------------------------------------------------
+   Añadido al final, sin tocar lo de arriba. Solo se animan `transform` y
+   `opacity` (las líneas de escaneo son un pseudo-elemento que se desplaza):
+   nada de propiedades que disparen layout. Todas las animaciones se apagan
+   con `prefers-reduced-motion: reduce`.
+   ========================================================================== */
+
+@keyframes eec-rise {
+  from { opacity: 0; transform: translate3d(0, 10px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes eec-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes eec-slide-in {
+  from { opacity: 0; transform: translate3d(-14px, 0, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes eec-reveal {
+  0% { opacity: 0; transform: scale(0.86) translate3d(0, 8px, 0); }
+  60% { opacity: 1; transform: scale(1.04) translate3d(0, 0, 0); }
+  100% { opacity: 1; transform: scale(1) translate3d(0, 0, 0); }
+}
+
+@keyframes eec-flash-ok {
+  0% { opacity: 0; }
+  14% { opacity: 0.22; }
+  100% { opacity: 0; }
+}
+
+@keyframes eec-glitch {
+  0%, 58%, 100% { transform: translate3d(0, 0, 0) skewX(0deg); }
+  60% { transform: translate3d(-3px, 1px, 0) skewX(-0.6deg); }
+  62% { transform: translate3d(3px, -1px, 0) skewX(0.5deg); }
+  64% { transform: translate3d(-2px, 0, 0) skewX(0deg); }
+  66% { transform: translate3d(0, 0, 0) skewX(0deg); }
+  82% { transform: translate3d(2px, -1px, 0) skewX(0.4deg); }
+  84% { transform: translate3d(-2px, 1px, 0) skewX(0deg); }
+  86% { transform: translate3d(0, 0, 0) skewX(0deg); }
+}
+
+@keyframes eec-flicker {
+  0%, 40%, 48%, 72%, 80%, 100% { opacity: 1; }
+  44% { opacity: 0.5; }
+  76% { opacity: 0.68; }
+}
+
+@keyframes eec-scan-sweep {
+  from { transform: translate3d(0, -120%, 0); }
+  to { transform: translate3d(0, 320%, 0); }
+}
+
+@keyframes eec-pulse-urgent {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
+
+@keyframes eec-shake {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  20% { transform: translate3d(-4px, 0, 0); }
+  40% { transform: translate3d(4px, 0, 0); }
+  60% { transform: translate3d(-3px, 0, 0); }
+  80% { transform: translate3d(2px, 0, 0); }
+}
+
+/* --- Utilidades reutilizables ------------------------------------------- */
+
+.anim-rise {
+  animation: eec-rise 0.36s cubic-bezier(0.22, 0.7, 0.3, 1) both;
+}
+
+.anim-fade {
+  animation: eec-fade 0.3s ease-out both;
+}
+
+.anim-slide-in {
+  animation: eec-slide-in 0.34s cubic-bezier(0.22, 0.7, 0.3, 1) both;
+}
+
+.anim-reveal {
+  animation: eec-reveal 0.5s cubic-bezier(0.18, 0.9, 0.3, 1) both;
+}
+
+.anim-shake {
+  animation: eec-shake 0.4s ease-in-out both;
+}
+
+/* Entrada en cascada: cada hijo directo sube con un retardo sutil. */
+.anim-stagger > * {
+  animation: eec-rise 0.36s cubic-bezier(0.22, 0.7, 0.3, 1) both;
+}
+.anim-stagger > *:nth-child(1) { animation-delay: 0ms; }
+.anim-stagger > *:nth-child(2) { animation-delay: 40ms; }
+.anim-stagger > *:nth-child(3) { animation-delay: 80ms; }
+.anim-stagger > *:nth-child(4) { animation-delay: 120ms; }
+.anim-stagger > *:nth-child(5) { animation-delay: 160ms; }
+.anim-stagger > *:nth-child(6) { animation-delay: 200ms; }
+.anim-stagger > *:nth-child(7) { animation-delay: 240ms; }
+.anim-stagger > *:nth-child(8) { animation-delay: 280ms; }
+.anim-stagger > *:nth-child(9) { animation-delay: 320ms; }
+.anim-stagger > *:nth-child(10) { animation-delay: 360ms; }
+.anim-stagger > *:nth-child(11) { animation-delay: 400ms; }
+.anim-stagger > *:nth-child(12) { animation-delay: 440ms; }
+
+/* Respuesta táctil de botones: solo transform. */
+.anim-tactile {
+  transition: transform 0.12s ease-out, background-color 0.16s ease-out,
+    border-color 0.16s ease-out, box-shadow 0.16s ease-out;
+}
+.anim-tactile:active {
+  transform: scale(0.965) translate3d(0, 1px, 0);
+}
+
+/* Pantalla de decisión: aparece deslizando y da un destello verde al confirmar. */
+.anim-flash-ok {
+  position: relative;
+  overflow: hidden;
+}
+.anim-flash-ok::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(120% 100% at 0% 0%, rgba(62, 207, 142, 0.55), rgba(62, 207, 142, 0) 72%);
+  opacity: 0;
+  animation: eec-flash-ok 0.9s ease-out both;
+}
+
+/* Banner de crisis: glitch/shake + líneas de escaneo CRT con barrido. */
+.anim-glitch {
+  animation: eec-glitch 4.2s linear infinite;
+}
+
+.anim-flicker {
+  animation: eec-flicker 3.6s steps(1, end) infinite;
+}
+
+.anim-pulse-urgent {
+  animation: eec-pulse-urgent 1.05s ease-in-out infinite;
+}
+
+.anim-scanline {
+  position: relative;
+  overflow: hidden;
+}
+.anim-scanline::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.55;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(231, 236, 245, 0.05) 0 1px,
+    rgba(10, 14, 23, 0) 1px 3px
+  );
+}
+.anim-scanline::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 30%;
+  z-index: 2;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 59, 78, 0) 0%,
+    rgba(255, 59, 78, 0.16) 50%,
+    rgba(255, 59, 78, 0) 100%
+  );
+  animation: eec-scan-sweep 3.8s linear infinite;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-rise,
+  .anim-fade,
+  .anim-slide-in,
+  .anim-reveal,
+  .anim-shake,
+  .anim-flicker,
+  .anim-glitch,
+  .anim-pulse-urgent,
+  .anim-stagger > * {
+    animation: none !important;
+  }
+  .anim-scanline::after,
+  .anim-flash-ok::after {
+    animation: none !important;
+    opacity: 0 !important;
+  }
+  .anim-tactile {
+    transition: none !important;
+  }
+  .anim-tactile:active {
+    transform: none !important;
+  }
+}

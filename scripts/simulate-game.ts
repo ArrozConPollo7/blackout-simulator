@@ -12,9 +12,11 @@ import type {
   CrisisResponse,
   DecisionResponse,
   GameStateResponse,
+  JoinGameResponse,
   PhaseResponse,
   StartGameResponse,
 } from '../types/api.ts';
+import { CASE_CATALOG } from '../content/cases.ts';
 import { ROUND2_SCENARIOS } from '../content/decisions.ts';
 import { handleRequest } from '../worker/src/index.ts';
 import { InMemoryRepo } from '../worker/src/repo-memory.ts';
@@ -69,12 +71,28 @@ function linea(estado: GameStateResponse, titulo: string) {
 
 async function main() {
   console.log('POST /game/start');
+  const EQUIPOS = 5;
   const started = (await (await call('/game/start', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ teamCount: 5 }),
+    body: JSON.stringify({ teamCount: EQUIPOS }),
   })).json()) as StartGameResponse;
-  console.log(`partida ${started.gameId} · host en ${started.hostPath}`);
+  console.log(
+    `partida ${started.gameId} · host en ${started.hostPath} · registro en ${started.joinPath}`,
+  );
+
+  // Cada mesa entra con su nombre por el mismo endpoint del QR del proyector.
+  console.log('\nPOST /game/:id/join (una mesa por caso del catálogo)');
+  for (const caso of CASE_CATALOG.slice(0, EQUIPOS)) {
+    const joined = await post<JoinGameResponse>(`/game/${started.gameId}/join`, { name: caso.name });
+    started.teams.push({
+      id: joined.teamId,
+      name: joined.name,
+      caseId: joined.caseId,
+      color: joined.color,
+      playPath: joined.playPath,
+    });
+  }
   for (const t of started.teams) console.log(`  ${t.name.padEnd(22)} ${t.color}  ${t.playPath}`);
 
   // El Worker es el unico escritor: en lobby no se aceptan decisiones.
