@@ -22,6 +22,10 @@ export default function DemoNav() {
     setPartida(readActiveGame());
   }, [isOpen, pathname]);
 
+  // Andamiaje de desarrollo: en la partida real (producción) no puede aparecer flotando
+  // sobre el proyector ni sobre el celular de un equipo.
+  if (process.env.NODE_ENV === 'production') return null;
+
   return (
     <aside aria-label="Navegador de demostración" className="fixed bottom-4 right-4 z-[999] font-sans">
       <button

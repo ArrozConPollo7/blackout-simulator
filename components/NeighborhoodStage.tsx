@@ -311,8 +311,8 @@ export default function NeighborhoodStage({
       >
         <span className="material-symbols-outlined text-[28px] text-accent-gas">grid_off</span>
         <p className="font-label-md text-label-md text-text-secondary uppercase mt-2">
-          Este dispositivo no puede dibujar el vecindario en 3D (WebGL no disponible). Las métricas
-          siguen disponibles en las tarjetas de telemetría.
+          Este equipo no puede dibujar el barrio. Las cifras de cada mesa siguen abajo, en sus
+          tarjetas.
         </p>
       </div>
     );

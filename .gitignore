@@ -43,3 +43,4 @@ repomap.md
 .dev.vars
 worker/.dev.vars
 .env*
+.aider*

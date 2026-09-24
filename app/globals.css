@@ -241,3 +241,275 @@
     transform: none !important;
   }
 }
+
+/* ==========================================================================
+   Energía en Crisis — vista del JUGADOR (respuesta táctil, urgencia, celebración)
+   --------------------------------------------------------------------------
+   Añadido al final, sin tocar nada de arriba. Todas las animaciones de este
+   bloque usan SOLO `transform` y `opacity` (los segmentos de progreso escalan
+   con `scaleX`, nunca cambian de ancho): nada dispara layout. El bloque de
+   `prefers-reduced-motion` de este final manda sobre el de arriba.
+   ========================================================================== */
+
+/* --- 1. Selección instantánea ------------------------------------------- */
+
+/* Golpe de la tarjeta al agarrar el toque. */
+@keyframes eec-pop {
+  0% { transform: scale(1); }
+  38% { transform: scale(1.035); }
+  100% { transform: scale(1); }
+}
+.anim-pop {
+  animation: eec-pop 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* Halo de "estoy enviando": late mientras llega la respuesta. */
+@keyframes eec-choice-ring {
+  0% { opacity: 0.7; transform: scale(1); }
+  70% { opacity: 0; transform: scale(1.03); }
+  100% { opacity: 0; transform: scale(1.03); }
+}
+.anim-choice-ring {
+  animation: eec-choice-ring 1.05s ease-out infinite;
+}
+
+/* Barrido de la barra de envío (traduce, no crece). */
+@keyframes eec-send-sweep {
+  from { transform: translate3d(-110%, 0, 0); }
+  to { transform: translate3d(210%, 0, 0); }
+}
+.anim-send-sweep {
+  animation: eec-send-sweep 0.95s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+.anim-send-sweep-fast {
+  animation: eec-send-sweep 0.5s linear infinite;
+}
+
+/* Puntos de "ENVIANDO…": el texto respira, la pantalla nunca parece muerta. */
+@keyframes eec-dot {
+  0%, 100% { opacity: 0.25; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}
+.anim-dots > span {
+  animation: eec-dot 0.7s ease-in-out infinite;
+}
+.anim-dots > span:nth-child(2) { animation-delay: 0.12s; }
+.anim-dots > span:nth-child(3) { animation-delay: 0.24s; }
+
+/* Destello verde al confirmar (el número llega justo después). */
+@keyframes eec-confirm-flash {
+  0% { opacity: 0; }
+  12% { opacity: 0.6; }
+  100% { opacity: 0; }
+}
+.anim-confirm-flash {
+  animation: eec-confirm-flash 0.75s ease-out both;
+}
+
+@keyframes eec-confirm-pop {
+  0% { opacity: 0.9; transform: scale(0.975); }
+  55% { opacity: 1; transform: scale(1.025); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.anim-confirm-pop {
+  animation: eec-confirm-pop 0.42s cubic-bezier(0.18, 0.9, 0.3, 1) both;
+}
+
+/* Sacudida seca del rechazo: corta y con peso. */
+@keyframes eec-deny {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  15% { transform: translate3d(-7px, 0, 0); }
+  32% { transform: translate3d(6px, 0, 0); }
+  48% { transform: translate3d(-4px, 0, 0); }
+  66% { transform: translate3d(3px, 0, 0); }
+  84% { transform: translate3d(-2px, 0, 0); }
+}
+.anim-deny {
+  animation: eec-deny 0.42s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+/* --- 2. Urgencia del cronómetro ---------------------------------------- */
+
+@keyframes eec-pulse-critical {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+}
+.anim-pulse-critical {
+  animation: eec-pulse-critical 0.55s ease-in-out infinite;
+}
+
+.eec-vignette {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+  background: radial-gradient(
+    120% 100% at 50% 50%,
+    rgba(255, 59, 78, 0) 38%,
+    rgba(255, 59, 78, 0.55) 100%
+  );
+}
+
+@keyframes eec-vignette-1 {
+  0%, 100% { opacity: 0.16; }
+  50% { opacity: 0.48; }
+}
+@keyframes eec-vignette-2 {
+  0%, 100% { opacity: 0.32; }
+  50% { opacity: 0.85; }
+}
+.eec-vignette-1 {
+  animation: eec-vignette-1 1.5s ease-in-out infinite;
+}
+.eec-vignette-2 {
+  animation: eec-vignette-2 0.7s ease-in-out infinite;
+}
+
+/* --- 3. Banner de toma de fase ----------------------------------------- */
+
+@keyframes eec-banner-in {
+  from { opacity: 0; transform: translate3d(0, -20px, 0) scaleY(0.72); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scaleY(1); }
+}
+@keyframes eec-banner-out {
+  from { opacity: 1; transform: translate3d(0, 0, 0) scaleY(1); }
+  to { opacity: 0; transform: translate3d(0, -14px, 0) scaleY(0.9); }
+}
+.anim-banner-in {
+  animation: eec-banner-in 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.anim-banner-out {
+  animation: eec-banner-out 0.32s ease-in both;
+}
+
+@keyframes eec-banner-sheen {
+  from { transform: translate3d(-120%, 0, 0); }
+  to { transform: translate3d(320%, 0, 0); }
+}
+.anim-banner-sheen {
+  animation: eec-banner-sheen 1.15s cubic-bezier(0.3, 0, 0.2, 1) 0.12s both;
+}
+
+/* --- 4. Progreso de ronda ---------------------------------------------- */
+
+@keyframes eec-seg-fill {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+.anim-seg-fill {
+  animation: eec-seg-fill 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes eec-bump {
+  0% { transform: translate3d(0, 0, 0); }
+  40% { transform: translate3d(0, -4px, 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}
+.anim-bump {
+  animation: eec-bump 0.3s ease-out both;
+}
+
+/* --- 5. Resultados y celebración --------------------------------------- */
+
+@keyframes eec-podium-in {
+  0% { opacity: 0; transform: scale(0.72) translate3d(0, 10px, 0); }
+  62% { opacity: 1; transform: scale(1.08) translate3d(0, 0, 0); }
+  100% { opacity: 1; transform: scale(1) translate3d(0, 0, 0); }
+}
+.anim-podium-in {
+  animation: eec-podium-in 0.62s cubic-bezier(0.18, 0.9, 0.3, 1) both;
+}
+
+@keyframes eec-flash-close {
+  0% { opacity: 0; transform: scale(0.9); }
+  30% { opacity: 0.5; }
+  100% { opacity: 0; transform: scale(1.08); }
+}
+.anim-flash-close {
+  animation: eec-flash-close 1.1s ease-out both;
+}
+
+/* Barra de comparación: crece con la escala, no con el ancho. */
+@keyframes eec-bar {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+.anim-bar {
+  animation: eec-bar 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.eec-celebration {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.eec-confetti-piece {
+  position: absolute;
+  top: 0;
+  display: block;
+  opacity: 0;
+  will-change: transform, opacity;
+  animation: eec-confetti var(--eec-dur, 2.8s) linear var(--eec-delay, 0ms) both;
+}
+
+@keyframes eec-confetti {
+  0% { opacity: 0; transform: translate3d(0, -14vh, 0) rotate(0deg); }
+  10% { opacity: 1; }
+  82% { opacity: 1; }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--eec-dx, 0px), 108vh, 0) rotate(var(--eec-rot, 540deg));
+  }
+}
+
+/* --- 6. Modo reducido: aquí manda este bloque -------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-pop,
+  .anim-choice-ring,
+  .anim-send-sweep,
+  .anim-send-sweep-fast,
+  .anim-dots > span,
+  .anim-confirm-flash,
+  .anim-confirm-pop,
+  .anim-deny,
+  .anim-pulse-critical,
+  .anim-banner-in,
+  .anim-banner-out,
+  .anim-banner-sheen,
+  .anim-seg-fill,
+  .anim-bump,
+  .anim-podium-in,
+  .anim-flash-close,
+  .anim-bar,
+  .anim-icon-kick,
+  .eec-confetti-piece,
+  .eec-vignette-1,
+  .eec-vignette-2 {
+    animation: none !important;
+  }
+  .eec-confetti-piece {
+    display: none !important;
+  }
+  .eec-vignette-1,
+  .eec-vignette-2 {
+    opacity: 0.22 !important;
+  }
+  .anim-choice-ring {
+    opacity: 0.5 !important;
+  }
+}
+
+/* --- 7. Cabecera viva: el ícono del KPI da un golpe cuando su número cambia --- */
+
+@keyframes eec-icon-kick {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+.anim-icon-kick {
+  animation: eec-icon-kick 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}

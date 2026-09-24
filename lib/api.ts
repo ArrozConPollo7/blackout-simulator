@@ -90,7 +90,7 @@ async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<
       throw new ApiClientError(
         response.status,
         error.code ?? error.error ?? 'internal',
-        error.detail ?? `El Worker respondió ${response.status}`,
+        error.detail ?? `El centro de control respondió ${response.status}`,
       );
     }
     return payload as T;
@@ -134,29 +134,31 @@ export const api = {
     apiFetch<PhaseResponse>(`/game/${gameId}/phase`, { method: 'POST', body: { phase }, host: true }),
 };
 
-/** Mensaje legible para el usuario a partir de un error del transporte. */
+/** Mensaje legible para el jugador a partir de un error del transporte (sin jerga técnica). */
 export function describeApiError(error: unknown): string {
   if (error instanceof ApiClientError) {
     switch (error.code) {
       case 'not_configured':
-        return 'La aplicación no tiene configurada la URL del Worker (NEXT_PUBLIC_API_URL).';
+        return 'Esta partida no está conectada al centro de control.';
       case 'timeout':
-        return 'El Worker no respondió; vuelve a intentar.';
+        return 'El centro de control no respondió; vuelve a intentarlo.';
       case 'network':
-        return `No hay conexión con el Worker (${error.detail ?? 'error de red'}).`;
+        return 'Se perdió la conexión con el centro de control.';
       case 'forbidden':
-        return 'Acción reservada al Host: contraseña incorrecta o ausente.';
+        return 'Solo el anfitrión puede hacer eso: contraseña incorrecta o ausente.';
       case 'name_taken':
         return error.detail ?? 'Ese nombre de equipo ya está en uso: elegid otro.';
       case 'game_full':
         return error.detail ?? 'La partida ya tiene el máximo de equipos.';
       case 'already_decided':
-        return 'Ese escenario ya fue decidido por el equipo.';
+        return 'Esa decisión ya quedó registrada por tu equipo.';
       case 'wrong_phase':
-        return error.detail ?? 'La partida no está aceptando decisiones en esta fase.';
+        return error.detail ?? 'La partida no acepta decisiones en este momento.';
+      case 'not_found':
+        return 'No encontramos esa partida o ese equipo.';
       default:
-        return error.detail ?? error.message;
+        return error.detail ?? 'Algo salió mal; vuelve a intentarlo.';
     }
   }
-  return error instanceof Error ? error.message : 'Error inesperado';
+  return 'Algo salió mal; vuelve a intentarlo.';
 }

@@ -36,8 +36,9 @@ export interface GameConnection {
   applyState: (next: GameStateResponse) => void;
 }
 
-const POLL_FALLBACK_MS = 5000;
 const REALTIME_DEBOUNCE_MS = 120;
+/** Ritmo del sondeo de respaldo: más rápido cuando Realtime no está suscrito. */
+const POLL_MS = { suscrito: 8000, respaldo: 4000 } as const;
 
 export function useGameState(gameId: string | null): GameConnection {
   const [state, setState] = useState<GameStateResponse | null>(null);
@@ -133,10 +134,13 @@ export function useGameState(gameId: string | null): GameConnection {
     };
   }, [gameId, reload]);
 
-  // Respaldo: mientras Realtime no esté suscrito, sondeo lento.
+  // Respaldo: el sondeo va SIEMPRE, más espaciado cuando Realtime ya avisa. Un aula con 30
+  // dispositivos no nota una petición cada 8 s, y evita que una suscripción al proyecto
+  // equivocado (o caída) deje el proyector y los celulares congelados sin que nadie lo sepa.
   useEffect(() => {
-    if (!gameId || realtime === 'suscrito') return;
-    const timer = setInterval(() => void reload(), POLL_FALLBACK_MS);
+    if (!gameId) return;
+    const periodo = realtime === 'suscrito' ? POLL_MS.suscrito : POLL_MS.respaldo;
+    const timer = setInterval(() => void reload(), periodo);
     return () => clearInterval(timer);
   }, [gameId, realtime, reload]);
 

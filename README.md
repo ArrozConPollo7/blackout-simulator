@@ -20,6 +20,7 @@ de la que sale cada decisión.
 | 1 | Tipos, esquema Supabase, contenido, motor puro, Worker API, flujo simulado | ✅ verificado |
 | 2 | Realtime, decisiones por Worker, timer absoluto, vecindario 3D reactivo | ✅ verificado en navegador |
 | 3 | Entrada por QR con nombre de equipo, contraseña del Host, vecindario 3D reelaborado, sonido y animaciones | ✅ verificado en navegador |
+| 4 | Lenguaje de juego (sin jerga técnica), feedback inmediato al decidir, medidor de red, tira de sucesos y podio con celebración | ✅ verificado en navegador |
 
 Verificación real: 93 tests (`npm test`), `npm run typecheck`, `npm run build`, `npm run sim`
 (partida completa sin UI) y una partida jugada de punta a punta en el navegador
@@ -57,6 +58,8 @@ lib/                       Cliente del Worker, Realtime, timer, formato, estado 
   audio.ts                 Sonido sintetizado con Web Audio (sin archivos de audio)
 components/                HostGate, JoinQr, SoundToggle, NeighborhoodStage + neighborhood/…
 components/neighborhood/   Vecindario 3D: arquetipos, materiales, mobiliario urbano
+components/host/           GridMeter, DecisionFeed y PodiumBurst (el marcador del proyector)
+components/play/           AnimatedNumber y ChoiceButton (los 5 estados del toque en el móvil)
 tests/                     93 tests con `node --test` (sin dependencias extra)
 scripts/simulate-game.ts   Partida completa sin UI   ·  scripts/dev-api.ts  API local en memoria
 ```
@@ -105,6 +108,21 @@ reiniciar `dev:api`.
 | `SUPABASE_SERVICE_ROLE_KEY` | Worker (`secret`) | Escrituras: es el único que escribe |
 | `HOST_TOKEN` | Worker (`secret`) | Token clásico de host; sigue valiendo como credencial |
 | `HOST_PASSCODE` | Worker (`secret`) | Contraseña que se teclea en `/host`. Sin configurar vale **9806** |
+
+### Cómo se siente la partida (Fase 4)
+
+- **La interfaz no habla de tecnología**: nada de «Worker», «Supabase», «API» ni variables en
+  pantalla; los avisos de configuración aparecen solo en desarrollo.
+- **Al decidir, la respuesta es inmediata aunque la red tarde**: la opción se marca al instante, las
+  demás se atenúan, se muestra «Enviando…» y el veredicto con sus números llega después (nunca
+  antes). Hay vibración en el móvil y aviso de urgencia en los últimos 30 s.
+- **El proyector es un marcador vivo**: recorrido de fases 1-6, cronómetro con barra que se agota,
+  medidor de carga de la red, contador de mesas que ya decidieron y una tira de sucesos reales
+  («terminó la auditoría», «subió 2 puestos»).
+- **Un solo clic crea la partida**: la consola no acepta clics hasta que React toma el control del
+  HTML, y el botón avisa con «Montando la sala…» mientras trabaja.
+- **El sondeo de respaldo va siempre** (cada 8 s con Realtime activo, cada 4 s sin él): una
+  suscripción caída o apuntada a otro proyecto ya no deja las pantallas congeladas.
 
 ### Entrada de los equipos (Fase 3)
 

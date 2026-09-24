@@ -30,3 +30,9 @@ export const missingConfig: string[] = [
 ];
 
 export const isApiConfigured = env.apiUrl.length > 0;
+
+/**
+ * Los avisos de configuración son para quien monta el juego, no para el aula: se muestran
+ * solo en desarrollo. En la partida real la pantalla no puede tener jerga técnica.
+ */
+export const isDevelopment = process.env.NODE_ENV !== 'production';

@@ -3,39 +3,50 @@
 /**
  * Vista Player (un celular por equipo, sin WebGL).
  *
- * Fase 2.4: los botones de decisión llaman a POST /game/:id/decision y NUNCA tocan el
- * estado local antes de la respuesta del Worker. El feedback ("Tu decisión ahorró X kWh")
- * se muestra con el estado que devuelve el Worker.
+ * Reglas que esta vista NO rompe:
+ *  1. El centro de control es la única fuente de verdad: la selección se marca al
+ *     instante, pero el EFECTO de una decisión solo se numera cuando llega la respuesta.
+ *  2. Cero datos inventados: cada número sale de `team`, `answered`, `results` o `remaining`.
+ *  3. El cronómetro vive en su propio subárbol (`HeaderTimer`): su tic de 250 ms ya no
+ *     repinta la lista de decisiones (antes arrastraba toda la página).
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import AnimatedNumber from '@/components/play/AnimatedNumber';
+import Celebration from '@/components/play/Celebration';
+import ChoiceButton from '@/components/play/ChoiceButton';
+import Countdown from '@/components/play/Countdown';
+import EffectChips from '@/components/play/EffectChips';
+import HeaderTimer from '@/components/play/HeaderTimer';
+import PhaseBanner from '@/components/play/PhaseBanner';
+import RoundProgress from '@/components/play/RoundProgress';
 import SoundToggle from '@/components/SoundToggle';
+import { hapticConfirm, hapticDeny, hapticTap } from '@/components/play/haptics';
 import { APPLIANCE_BY_ID, ROUND2B_SCENARIOS, ROUND2_SCENARIOS } from '@/content/decisions';
 import { PRESUPUESTO_INICIAL } from '@/content/economy';
-import { PHASE_BY_NAME } from '@/content/phases';
 import type { ApplianceProfile, DecisionScenario } from '@/content/decisions';
+import type { TeamResult } from '@/engine/results';
 import type { DecisionEffect, TeamState } from '@/types/game';
 import type { GameStateResponse } from '@/types/api';
-import { api, describeApiError } from '@/lib/api';
+import { ApiClientError, api } from '@/lib/api';
 import { useAudioEvent } from '@/lib/audio';
 import { missingConfig } from '@/lib/env';
 import { resolveGameId } from '@/lib/game-store';
-import { useGameState, useRemainingMs } from '@/lib/useGameState';
+import { useGameState } from '@/lib/useGameState';
 import {
   CONFORT_LABEL,
   CONSUMO_LABEL,
   dinero,
   formatNumber,
-  formatRemaining,
   impactHint,
   kwh,
   m3,
-  phaseLabel,
   realtimeIcon,
   realtimeLabel,
 } from '@/lib/ui';
+
+type Ronda = 'investigar' | 'decidir' | 'decidir_2';
 
 interface Feedback {
   text: string;
@@ -43,9 +54,23 @@ interface Feedback {
   scenarioKey: string;
 }
 
+/** Última selección y su desenlace: pinta la tarjeta elegida hasta que la vista avanza. */
+interface ChoiceFeedback {
+  scenarioKey: string;
+  optionId: string;
+  status: 'ok' | 'rejected';
+  nonce: number;
+  reason: string;
+}
+
+/** La confirmación se queda en pantalla lo justo para leerse y luego avanza sola. */
+const CONFIRM_HOLD_MS = 1050;
+const REJECT_HOLD_MS = 1800;
+
 /**
  * ¿Quedó la ronda de decisiones sin situaciones pendientes? Se usa solo para elegir el
- * sonido (acorde de resolución en vez de confirmación): la verdad sigue siendo del Worker.
+ * sonido (acorde de resolución en vez de confirmación): la verdad sigue siendo del centro
+ * de control.
  */
 function rondaCompleta(
   state: GameStateResponse,
@@ -60,15 +85,36 @@ function rondaCompleta(
   );
 }
 
+/** Rechazo del motor en lenguaje de juego: nunca se muestra texto técnico al jugador. */
+function mensajeJugador(error: unknown): string {
+  if (error instanceof ApiClientError) {
+    switch (error.code) {
+      case 'timeout':
+      case 'network':
+        return 'Sin señal: no llegó la respuesta. Vuelve a tocar tu opción.';
+      case 'wrong_phase':
+        return 'La ronda ya cambió: espera la próxima lectura del Host.';
+      case 'already_decided':
+        return 'Esa situación ya quedó registrada.';
+      default:
+        return 'La jugada no se pudo registrar. Toca otra vez.';
+    }
+  }
+  return 'La jugada no se pudo registrar. Toca otra vez.';
+}
+
 export default function PlayerPage({ params }: { params: { teamId: string } }) {
   const teamId = params.teamId;
   const [gameId, setGameId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [pending, setPending] = useState<string | null>(null);
+  const [choice, setChoice] = useState<ChoiceFeedback | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** Cada fallo sube el contador: así la sacudida del aviso se repite aunque el texto sea igual. */
   const [errorNonce, setErrorNonce] = useState(0);
   const [openAppliance, setOpenAppliance] = useState<string | null>(null);
+  /** Sube con cada decisión confirmada: da el golpe visual a la barra de ronda. */
+  const [pulsoRonda, setPulsoRonda] = useState(0);
 
   useEffect(() => {
     const url = new URLSearchParams(window.location.search).get('game');
@@ -81,14 +127,11 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
   const caso = state?.cases[teamId] ?? null;
   const answered = state?.answered[teamId] ?? [];
   const phase = state?.phase;
-  const remaining = useRemainingMs(state?.timerEndsAt ?? null, phase, connection.clockSkewMs);
 
   const playEvent = useAudioEvent();
   const lastPhaseRef = useRef<string | null>(null);
-  const timeWarnedRef = useRef(false);
   const lastTelemetryRef = useRef(0);
-  /** El cronómetro solo se pone rojo y pulsa cuando de verdad queda poco. */
-  const timerCritical = remaining !== null && remaining <= 30000;
+  const nonceRef = useRef(0);
 
   // Cambio de fase: relé al abrir ronda, alarma al entrar en crisis, fanfarria al cerrar.
   useEffect(() => {
@@ -101,20 +144,7 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
     else playEvent('phase');
   }, [phase, playEvent]);
 
-  // Aviso de tiempo bajo: tic doble, una sola vez por tramo.
-  useEffect(() => {
-    if (remaining === null) {
-      timeWarnedRef.current = false;
-      return;
-    }
-    if (remaining > 25000) timeWarnedRef.current = false;
-    if (remaining > 0 && remaining <= 20000 && !timeWarnedRef.current) {
-      timeWarnedRef.current = true;
-      playEvent('timeLow');
-    }
-  }, [remaining, playEvent]);
-
-  // Blip de telemetría al sincronizar con el Worker, con freno para no ser un metrónomo.
+  // Blip de telemetría al sincronizar, con freno para no ser un metrónomo.
   const lastSyncAt = connection.lastSyncAt;
   useEffect(() => {
     if (!lastSyncAt) return;
@@ -124,28 +154,72 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
     playEvent('telemetry');
   }, [lastSyncAt, playEvent]);
 
-  const decidir = async (optionId: string, scenarioKey: string, round: 'investigar' | 'decidir' | 'decidir_2') => {
+  // La marca de la última elección se limpia sola: confirmada (avanza la ronda)
+  // o rechazada (vuelve a quedar elegible).
+  useEffect(() => {
+    if (!choice) return;
+    const ms = choice.status === 'ok' ? CONFIRM_HOLD_MS : REJECT_HOLD_MS;
+    const id = setTimeout(() => {
+      setChoice((actual) => (actual && actual.nonce === choice.nonce ? null : actual));
+    }, ms);
+    return () => clearTimeout(id);
+  }, [choice]);
+
+  const decidir = async (optionId: string, scenarioKey: string, round: Ronda) => {
     if (!state) return;
-    playEvent('click');
+    // Marca instantánea: la tarjeta se pinta elegida en el mismo frame del toque.
     setPending(optionId);
+    setChoice(null);
     setError(null);
     try {
       const respuesta = await api.sendDecision(state.gameId, { teamId, round, optionId });
-      // Solo después de la respuesta del Worker se muestra el resultado.
+      // Solo después de la respuesta del centro de control se muestran los números del efecto.
       setFeedback({ text: respuesta.feedback, effect: respuesta.effect, scenarioKey });
       connection.applyState(respuesta.state);
       setOpenAppliance(null);
+      nonceRef.current += 1;
+      setChoice({ scenarioKey, optionId, status: 'ok', nonce: nonceRef.current, reason: '' });
+      setPulsoRonda((n) => n + 1);
+      hapticConfirm();
       // Confirmación; si con esta decisión queda la ronda completa, acorde de resolución.
       const completa = round !== 'investigar' && rondaCompleta(respuesta.state, round, teamId);
       playEvent(completa ? 'resolve' : 'confirm');
     } catch (cause) {
       playEvent('deny');
-      setError(describeApiError(cause));
+      hapticDeny();
+      const motivo = mensajeJugador(cause);
+      setError(motivo);
       setErrorNonce((n) => n + 1);
+      nonceRef.current += 1;
+      setChoice({
+        scenarioKey,
+        optionId,
+        status: 'rejected',
+        nonce: nonceRef.current,
+        reason: motivo,
+      });
     } finally {
       setPending(null);
     }
   };
+
+  // Callbacks estables: los botones de opción no se repintan si su estado no cambió.
+  const decidirRef = useRef(decidir);
+  const openRef = useRef(openAppliance);
+  useEffect(() => {
+    decidirRef.current = decidir;
+    openRef.current = openAppliance;
+  });
+
+  const onDecideEscenario = useCallback((optionId: string, scenarioKey: string, round: Ronda) => {
+    void decidirRef.current(optionId, scenarioKey, round);
+  }, []);
+
+  const onDecideAparato = useCallback((optionId: string) => {
+    const abierto = openRef.current;
+    if (!abierto) return;
+    void decidirRef.current(optionId, `r1:${abierto}`, 'investigar');
+  }, []);
 
   const appliances = useMemo(
     () =>
@@ -155,9 +229,54 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
     [caso],
   );
 
+  /** Progreso de la ronda activa, contado desde `answered` (verdad del centro de control). */
+  const progreso = useMemo(() => {
+    if (!state || !phase) return null;
+    if (phase === 'investigar') {
+      const ids = caso?.appliances ?? [];
+      if (ids.length === 0) return null;
+      return {
+        etiqueta: 'Aparatos auditados',
+        total: ids.length,
+        resolved: ids.filter((id) => answered.includes(`r1:${id}`)).length,
+        tono: 'electricidad' as const,
+      };
+    }
+    if (phase === 'decidir') {
+      return {
+        etiqueta: 'Situaciones resueltas',
+        total: ROUND2_SCENARIOS.length,
+        resolved: ROUND2_SCENARIOS.filter((s) => answered.includes(`r2:${s.id}`)).length,
+        tono: 'eficiencia' as const,
+      };
+    }
+    if (phase === 'decidir_2') {
+      return {
+        etiqueta: 'Decisión bajo tarifa nueva',
+        total: ROUND2B_SCENARIOS.length,
+        resolved: ROUND2B_SCENARIOS.filter((s) => answered.includes('r2b')).length,
+        tono: 'eficiencia' as const,
+      };
+    }
+    return null;
+  }, [state, phase, caso, answered]);
+
+  /** Escenario ya resuelto que sigue en pantalla mientras se lee la confirmación. */
+  const hold = useMemo(
+    () => (choice && choice.status === 'ok' ? { scenarioKey: choice.scenarioKey, optionId: choice.optionId } : null),
+    [choice],
+  );
+
   const escenariosRonda2 = phase === 'decidir_2' ? ROUND2B_SCENARIOS : ROUND2_SCENARIOS;
-  const rondaActual: 'investigar' | 'decidir' | 'decidir_2' | null =
+  const rondaActual: Ronda | null =
     phase === 'investigar' ? 'investigar' : phase === 'decidir' ? 'decidir' : phase === 'decidir_2' ? 'decidir_2' : null;
+
+  const avisoSenal =
+    connection.status === 'error' || connection.realtime === 'error'
+      ? 'SIN SEÑAL'
+      : connection.realtime === 'conectando' && state
+        ? 'RECONECTANDO…'
+        : null;
 
   if (!gameId) {
     return (
@@ -173,18 +292,28 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
   if (connection.status === 'cargando' && !state) {
     return (
       <Marco>
-        <Panel titulo="Conectando con el centro de control…" icono="sync">
-          Pidiendo el estado completo de la partida al Worker.
+        <Panel titulo="Sincronizando lecturas…" icono="sync">
+          <span className="flex items-center gap-2">
+            Estamos abriendo tu caso. Un instante.
+            <span className="anim-dots flex gap-0.5" aria-hidden>
+              <span className="w-1 h-1 rounded-full bg-text-secondary" />
+              <span className="w-1 h-1 rounded-full bg-text-secondary" />
+              <span className="w-1 h-1 rounded-full bg-text-secondary" />
+            </span>
+          </span>
         </Panel>
       </Marco>
     );
   }
 
   if (connection.status === 'error' && !state) {
+    const sinPartida = /no encontramos|not_found|404/i.test(connection.error ?? '');
     return (
       <Marco>
-        <Panel titulo="Sin conexión con el Worker" icono="wifi_off">
-          {connection.error}
+        <Panel titulo={sinPartida ? 'No encontramos la partida' : 'Sin señal'} icono={sinPartida ? 'search_off' : 'wifi_off'}>
+          {sinPartida
+            ? 'Este enlace no corresponde a ninguna partida abierta. Pídeselo otra vez a quien monta el juego.'
+            : 'No hay enlace con el centro de control. Acércate al Host y vuelve a cargar.'}
         </Panel>
       </Marco>
     );
@@ -202,6 +331,8 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
 
   return (
     <div className="min-h-screen bg-bg-primary text-text-primary flex flex-col items-center">
+      <PhaseBanner phase={phase} />
+
       <div className="w-full max-w-md min-h-screen flex flex-col bg-bg-primary relative pb-20">
         {/* HEADER MÓVIL */}
         <header className="fixed top-0 max-w-md w-full z-50 bg-bg-surface/95 backdrop-blur-xl border-b border-border-subtle shadow-md">
@@ -220,28 +351,11 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
                 </span>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <div
-                  className={`flex items-center gap-1 px-2 py-0.5 rounded bg-bg-primary border ${
-                    timerCritical
-                      ? 'border-accent-crisis/60 anim-pulse-urgent'
-                      : 'border-border-subtle'
-                  }`}
-                >
-                  <span
-                    className={`material-symbols-outlined text-[14px] ${
-                      timerCritical ? 'text-accent-crisis' : 'text-accent-electricidad'
-                    }`}
-                  >
-                    timer
-                  </span>
-                  <span
-                    className={`font-label-md text-label-md font-bold tabular-nums ${
-                      timerCritical ? 'text-accent-crisis' : 'text-accent-electricidad'
-                    }`}
-                  >
-                    {formatRemaining(remaining)}
-                  </span>
-                </div>
+                <HeaderTimer
+                  phase={phase}
+                  timerEndsAt={state?.timerEndsAt}
+                  clockSkewMs={connection.clockSkewMs}
+                />
                 <SoundToggle className="shrink-0" />
                 <span
                   className="material-symbols-outlined text-[18px] text-text-secondary"
@@ -257,25 +371,25 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
                 icono="bolt"
                 etiqueta="Elec"
                 color="text-accent-electricidad"
-                valor={team ? `${formatNumber(team.electricidad, 1)}k` : '—'}
+                valor={team ? `${formatNumber(team.electricidad, 1)} kWh` : '—'}
                 numero={team?.electricidad}
-                formato={(valor) => `${formatNumber(valor, 1)}k`}
+                formato={(valor) => `${formatNumber(valor, 1)} kWh`}
               />
               <Badge
                 icono="local_fire_department"
                 etiqueta="Gas"
                 color="text-accent-gas"
-                valor={team ? m3(team.gas) : '—'}
+                valor={team ? `${formatNumber(team.gas, 1)} m³` : '—'}
                 numero={team?.gas}
-                formato={m3}
+                formato={(valor) => `${formatNumber(valor, 1)} m³`}
               />
               <Badge
                 icono="account_balance_wallet"
                 etiqueta="Ppto"
                 color="text-accent-presupuesto"
-                valor={team ? `${Math.round(team.presupuesto / 1000)}k` : '—'}
+                valor={team ? `$ ${Math.round(team.presupuesto / 1000)}k` : '—'}
                 numero={team?.presupuesto}
-                formato={(valor) => `${Math.round(valor / 1000)}k`}
+                formato={(valor) => `$ ${Math.round(valor / 1000)}k`}
               />
               <Badge
                 icono="speed"
@@ -286,13 +400,19 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
                 formato={(valor) => `${formatNumber(valor, 0)}%`}
               />
             </div>
+
+            {avisoSenal && (
+              <span className="self-start rounded bg-accent-crisis/20 px-1.5 py-0.5 font-label-sm text-[9px] font-bold uppercase tracking-wider text-accent-crisis anim-fade">
+                {avisoSenal}
+              </span>
+            )}
           </div>
         </header>
 
         <main className="w-full pt-28 px-4 flex-1 flex flex-col gap-4">
           {missingConfig.length > 0 && (
             <p className="rounded-lg border border-accent-gas/40 bg-accent-gas/10 px-3 py-2 font-label-sm text-label-sm">
-              Faltan variables de entorno: {missingConfig.join(', ')}
+              El centro de control no está enlazado con esta partida. Avisa al Host.
             </p>
           )}
           {error && (
@@ -302,6 +422,19 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
             >
               {error}
             </p>
+          )}
+
+          {/* PROGRESO DE LA RONDA ACTIVA */}
+          {progreso && (
+            <div className="sticky top-[96px] z-30">
+              <RoundProgress
+                etiqueta={progreso.etiqueta}
+                resolved={progreso.resolved}
+                total={progreso.total}
+                tono={progreso.tono}
+                pulso={pulsoRonda}
+              />
+            </div>
           )}
 
           {/* LOBBY */}
@@ -326,18 +459,22 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
               <div className="grid grid-cols-2 gap-3 anim-stagger">
                 {appliances.map((app) => {
                   const yaResuelto = answered.includes(`r1:${app.id}`);
+                  const abierto = openAppliance === app.id;
                   return (
                     <button
                       key={app.id}
                       type="button"
                       onClick={() => {
                         playEvent('click');
-                        setOpenAppliance(openAppliance === app.id ? null : app.id);
+                        hapticTap();
+                        setOpenAppliance(abierto ? null : app.id);
                       }}
-                      className={`p-3 rounded-xl bg-bg-surface border text-left flex flex-col justify-between min-h-[104px] anim-tactile ${
-                        openAppliance === app.id
+                      className={`relative p-3 rounded-xl bg-bg-surface border text-left flex flex-col justify-between min-h-[104px] anim-tactile ${
+                        abierto
                           ? 'border-accent-presupuesto ring-1 ring-accent-presupuesto'
-                          : 'border-border-subtle'
+                          : yaResuelto
+                            ? 'border-accent-eficiencia/40'
+                            : 'border-border-subtle'
                       }`}
                     >
                       <div className="flex items-center justify-between w-full">
@@ -345,7 +482,7 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
                           {app.icon}
                         </span>
                         {yaResuelto && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent-eficiencia/20 text-accent-eficiencia font-bold uppercase">
+                          <span className="anim-pop text-[9px] px-1.5 py-0.5 rounded bg-accent-eficiencia/20 text-accent-eficiencia font-bold uppercase">
                             REVISADO
                           </span>
                         )}
@@ -368,7 +505,16 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
                   app={APPLIANCE_BY_ID[openAppliance]}
                   answered={answered.includes(`r1:${openAppliance}`)}
                   pending={pending}
-                  onDecide={(optionId) => void decidir(optionId, `r1:${openAppliance}`, 'investigar')}
+                  confirmada={hold?.scenarioKey === `r1:${openAppliance}` ? hold.optionId : null}
+                  rechazo={
+                    choice?.status === 'rejected' && choice.scenarioKey === `r1:${openAppliance}`
+                      ? { optionId: choice.optionId, reason: choice.reason }
+                      : null
+                  }
+                  efecto={
+                    feedback?.scenarioKey === `r1:${openAppliance}` ? feedback.effect : null
+                  }
+                  onDecide={onDecideAparato}
                 />
               )}
 
@@ -383,14 +529,17 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
             <div className="flex flex-col gap-4 anim-fade">
               <Encabezado
                 titulo={rondaActual === 'decidir_2' ? 'Últimas decisiones bajo crisis' : 'Situaciones del día'}
-                ayuda="Cada situación tiene tres opciones. El resultado exacto lo calcula el Worker."
+                ayuda="Cada situación tiene tres opciones: la tuya se marca al tocar y el marcador se actualiza al confirmar."
               />
               <ListaEscenarios
                 escenarios={escenariosRonda2}
                 answered={answered}
                 pending={pending}
                 round={rondaActual}
-                onDecide={decidir}
+                hold={hold}
+                rechazo={choice?.status === 'rejected' ? choice : null}
+                efectoConfirmado={feedback?.effect ?? null}
+                onDecide={onDecideEscenario}
               />
               {feedback && !feedback.scenarioKey.startsWith('r1:') && (
                 <FeedbackCard key={`${feedback.scenarioKey}:${feedback.text}`} feedback={feedback} />
@@ -407,9 +556,12 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
                     <span className="px-2 py-0.5 rounded bg-accent-crisis text-white font-label-sm text-label-sm font-bold uppercase tracking-wider anim-pulse-urgent">
                       ¡ALERTA DE CRISIS!
                     </span>
-                    <span className="font-label-md text-label-md text-accent-crisis font-bold tabular-nums">
-                      {formatRemaining(remaining)}
-                    </span>
+                    <Countdown
+                      phase={phase}
+                      timerEndsAt={state?.timerEndsAt}
+                      clockSkewMs={connection.clockSkewMs}
+                      className="font-label-md text-label-md text-accent-crisis font-bold tabular-nums"
+                    />
                   </div>
                   <h1 className="font-headline-md text-headline-md text-text-primary uppercase font-bold tracking-tight anim-flicker">
                     El precio de la electricidad subió 30%
@@ -428,11 +580,10 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
           {phase === 'resultados' && state && team && (
             <Resultados
               team={team}
-              puesto={state.results?.ranking.find((r) => r.team.id === team.id)?.rank ?? null}
+              fila={state.results?.ranking.find((r) => r.team.id === team.id) ?? null}
               total={state.results?.ranking.length ?? null}
               promedioEficiencia={state.results?.promedioEficiencia ?? null}
               promedioConsumo={state.results?.promedioConsumoElectrico ?? null}
-              puntos={state.results?.ranking.find((r) => r.team.id === team.id)?.puntos ?? team.puntos}
             />
           )}
         </main>
@@ -466,7 +617,7 @@ function Panel({
           {titulo}
         </h1>
       </div>
-      <p className="font-body-sm text-body-sm text-text-secondary">{children}</p>
+      <div className="font-body-sm text-body-sm text-text-secondary">{children}</div>
     </section>
   );
 }
@@ -478,6 +629,7 @@ function Badge({
   color,
   numero,
   formato,
+  duration = 420,
 }: {
   icono: string;
   etiqueta: string;
@@ -486,17 +638,44 @@ function Badge({
   /** Número real del KPI: si llega, el valor se anima en vez de saltar. */
   numero?: number;
   formato?: (value: number) => string;
+  /** Duración del contador: breve, la cabecera se lee de reojo. */
+  duration?: number;
 }) {
+  /**
+   * El ícono da un golpe cada vez que el número cambia, para que la mesa vea de reojo
+   * que su decisión movió el marcador.
+   */
+  const [golpe, setGolpe] = useState(0);
+  const previo = useRef<number | undefined>(numero);
+  const primera = useRef(true);
+
+  useEffect(() => {
+    if (primera.current) {
+      primera.current = false;
+      previo.current = numero;
+      return;
+    }
+    if (numero !== undefined && previo.current !== undefined && numero !== previo.current) {
+      setGolpe((n) => n + 1);
+    }
+    previo.current = numero;
+  }, [numero]);
+
   return (
     <div className="flex items-center gap-1 px-1.5 py-1 rounded bg-bg-primary/80 border border-border-subtle">
-      <span className={`material-symbols-outlined ${color} text-[14px]`}>{icono}</span>
+      <span
+        key={golpe}
+        className={`material-symbols-outlined ${color} text-[14px] ${golpe > 0 ? 'anim-icon-kick' : ''}`}
+      >
+        {icono}
+      </span>
       <div className="flex flex-col min-w-0">
         <span className="font-label-sm text-[9px] text-text-secondary uppercase leading-none">
           {etiqueta}
         </span>
         <span className="font-label-sm text-[11px] text-text-primary truncate font-bold leading-tight tabular-nums">
           {numero !== undefined && formato ? (
-            <AnimatedNumber value={numero} format={formato} />
+            <AnimatedNumber value={numero} format={formato} duration={duration} />
           ) : (
             valor
           )}
@@ -521,7 +700,6 @@ function Encabezado({ titulo, ayuda }: { titulo: string; ayuda: string }) {
 }
 
 function FeedbackCard({ feedback }: { feedback: Feedback }) {
-  const { effect } = feedback;
   return (
     <section className="rounded-xl border border-accent-eficiencia/40 bg-accent-eficiencia/10 p-4 flex flex-col gap-2 anim-slide-in anim-flash-ok">
       <div className="flex items-center gap-2">
@@ -533,49 +711,7 @@ function FeedbackCard({ feedback }: { feedback: Feedback }) {
         </h3>
       </div>
       <p className="font-body-md text-body-md text-text-primary">{feedback.text}</p>
-      <div className="flex flex-wrap gap-3 font-label-sm text-label-sm text-text-secondary">
-        {effect.electricidad !== undefined && (
-          <span className="flex items-center gap-1">
-            <span className="material-symbols-outlined text-[14px] text-accent-electricidad">
-              bolt
-            </span>
-            <strong className={effect.electricidad <= 0 ? 'text-accent-eficiencia' : 'text-accent-gas'}>
-              {effect.electricidad > 0 ? '+' : ''}
-              {kwh(effect.electricidad)}
-            </strong>
-          </span>
-        )}
-        {effect.gas !== undefined && effect.gas !== 0 && (
-          <span className="flex items-center gap-1">
-            <span className="material-symbols-outlined text-[14px] text-accent-gas">
-              local_fire_department
-            </span>
-            <strong className={effect.gas <= 0 ? 'text-accent-eficiencia' : 'text-accent-gas'}>
-              {effect.gas > 0 ? '+' : ''}
-              {m3(effect.gas)}
-            </strong>
-          </span>
-        )}
-        {effect.presupuesto !== undefined && (
-          <span className="flex items-center gap-1">
-            <span className="material-symbols-outlined text-[14px] text-accent-presupuesto">
-              account_balance_wallet
-            </span>
-            <strong className="text-accent-presupuesto">{dinero(effect.presupuesto)}</strong>
-          </span>
-        )}
-        {effect.eficiencia !== undefined && effect.eficiencia !== 0 && (
-          <span className="flex items-center gap-1">
-            <span className="material-symbols-outlined text-[14px] text-accent-eficiencia">
-              speed
-            </span>
-            <strong className={effect.eficiencia > 0 ? 'text-accent-eficiencia' : 'text-accent-gas'}>
-              {effect.eficiencia > 0 ? '+' : ''}
-              {formatNumber(effect.eficiencia, 2)} %
-            </strong>
-          </span>
-        )}
-      </div>
+      <EffectChips effect={feedback.effect} />
     </section>
   );
 }
@@ -584,13 +720,24 @@ function FichaAparato({
   app,
   answered,
   pending,
+  confirmada,
+  rechazo,
+  efecto,
   onDecide,
 }: {
   app: ApplianceProfile;
   answered: boolean;
   pending: string | null;
+  /** Opción que el centro de control ya confirmó para este aparato. */
+  confirmada: string | null;
+  /** Rechazo del motor para este aparato, con su motivo. */
+  rechazo: { optionId: string; reason: string } | null;
+  /** Efecto ya resuelto (solo se numera cuando llegó la respuesta). */
+  efecto: DecisionEffect | null;
   onDecide: (optionId: string) => void;
 }) {
+  const bloqueada = confirmada !== null;
+
   return (
     <section className="rounded-xl bg-surface-container border border-border-subtle shadow-xl flex flex-col gap-3 p-4 anim-slide-in">
       <div className="flex items-center justify-between pb-2 border-b border-border-subtle">
@@ -609,14 +756,18 @@ function FichaAparato({
         <Dato etiqueta="Potencia" valor={app.potenciaText} color="text-accent-electricidad" />
         <Dato etiqueta="Uso" valor={app.usoText} color="text-text-primary" />
         <Dato etiqueta="Consumo" valor={app.consumoText} color="text-accent-electricidad" />
-        <Dato etiqueta="Costo estimado" valor={dinero(app.referencia.electricidad * 550 + app.referencia.gas * 450)} color="text-accent-presupuesto" />
+        <Dato
+          etiqueta="Costo estimado"
+          valor={dinero(app.referencia.electricidad * 550 + app.referencia.gas * 450)}
+          color="text-accent-presupuesto"
+        />
       </div>
 
       <p className="font-body-sm text-body-sm text-text-secondary">
         Situación actual: <strong className="text-text-primary">{app.problemaOculto}</strong>
       </p>
 
-      {answered ? (
+      {answered && !bloqueada ? (
         <p className="font-label-md text-label-md text-accent-eficiencia uppercase">
           Este aparato ya fue atendido.
         </p>
@@ -625,31 +776,32 @@ function FichaAparato({
           <span className="font-label-sm text-label-sm text-text-secondary uppercase tracking-wider">
             ¿Qué hace tu equipo con este aparato?
           </span>
-          {app.options.map((option) => {
-            const hint = impactHint(option.effect);
-            return (
-              <button
-                key={option.id}
-                type="button"
-                disabled={pending !== null}
-                onClick={() => onDecide(option.id)}
-                className="min-h-[48px] p-3.5 rounded-xl border border-border-subtle bg-bg-surface text-left flex flex-col gap-1.5 anim-tactile disabled:opacity-60"
-              >
-                <span className="font-label-md text-label-md font-bold text-text-primary">
-                  {option.label}
-                </span>
-                <span className="flex gap-3 font-label-sm text-[11px] text-text-secondary">
-                  <span>
-                    Consumo:{' '}
-                    <strong className={hint.consumo === 'igual' ? 'text-text-primary' : 'text-accent-eficiencia'}>
-                      {CONSUMO_LABEL[hint.consumo]}
-                    </strong>
-                  </span>
-                  <span>{CONFORT_LABEL[hint.confort]}</span>
-                </span>
-              </button>
-            );
-          })}
+          {app.options.map((option, i) => (
+            <ChoiceButton
+              key={option.id}
+              optionId={option.id}
+              label={option.label}
+              consumo={CONSUMO_LABEL[impactHint(option.effect).consumo]}
+              ahorra={impactHint(option.effect).consumo !== 'igual'}
+              confort={CONFORT_LABEL[impactHint(option.effect).confort]}
+              index={i}
+              state={
+                pending === option.id
+                  ? 'sending'
+                  : confirmada === option.id
+                    ? 'confirmed'
+                    : rechazo?.optionId === option.id
+                      ? 'rejected'
+                      : pending !== null || bloqueada
+                        ? 'muted'
+                        : 'idle'
+              }
+              disabled={pending !== null || bloqueada}
+              reason={rechazo?.optionId === option.id ? rechazo.reason : null}
+              effect={confirmada === option.id ? efecto : null}
+              onSelect={onDecide}
+            />
+          ))}
         </div>
       )}
     </section>
@@ -692,118 +844,232 @@ function ListaEscenarios({
   answered,
   pending,
   round,
+  hold,
+  rechazo,
+  efectoConfirmado,
   onDecide,
 }: {
   escenarios: DecisionScenario[];
   answered: string[];
   pending: string | null;
   round: 'decidir' | 'decidir_2';
-  onDecide: (optionId: string, scenarioKey: string, round: 'decidir' | 'decidir_2') => Promise<void>;
+  /** Escenario ya resuelto que sigue en pantalla mientras se lee la confirmación. */
+  hold: { scenarioKey: string; optionId: string } | null;
+  rechazo: { scenarioKey: string; optionId: string; reason: string } | null;
+  /** Efecto ya resuelto para la tarjeta confirmada (nunca se adivina). */
+  efectoConfirmado: DecisionEffect | null;
+  onDecide: (optionId: string, scenarioKey: string, round: 'decidir' | 'decidir_2') => void;
 }) {
   const clave = (id: string) => (round === 'decidir_2' ? 'r2b' : `r2:${id}`);
+  const total = escenarios.length;
   const pendientes = escenarios.filter((escenario) => !answered.includes(clave(escenario.id)));
-  const resueltos = escenarios.length - pendientes.length;
+  const resueltos = total - pendientes.length;
+  const enEspera = hold ? escenarios.find((e) => clave(e.id) === hold.scenarioKey) ?? null : null;
+  const visible = enEspera ?? pendientes[0] ?? null;
+  const claveVisible = visible ? clave(visible.id) : null;
 
-  if (escenarios.length === 0) {
+  // Callback estable por situación: las tarjetas memoizadas no se repintan de más.
+  const seleccionar = useCallback(
+    (optionId: string) => {
+      if (claveVisible) onDecide(optionId, claveVisible, round);
+    },
+    [claveVisible, onDecide, round],
+  );
+
+  if (total === 0) {
     return <p className="font-body-md text-body-md text-text-secondary">Sin situaciones pendientes.</p>;
   }
 
+  if (!visible || !claveVisible) {
+    return (
+      <Panel titulo="Ronda completa" icono="check_circle">
+        Ya decidiste todas las situaciones de esta ronda. Espera al Host para el siguiente paso.
+      </Panel>
+    );
+  }
+
+  const confirmada = hold?.scenarioKey === claveVisible ? hold.optionId : null;
+  const rechazadoId = rechazo?.scenarioKey === claveVisible ? rechazo.optionId : null;
+  const bloqueada = confirmada !== null || enEspera !== null;
+  // Durante la confirmación la situación ya cuenta como resuelta: muestra su propio número.
+  const numero = enEspera ? Math.max(1, resueltos) : resueltos + 1;
+
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between font-label-sm text-label-sm text-text-secondary uppercase">
-        <span>
-          Situaciones resueltas: {resueltos} / {escenarios.length}
-        </span>
-        <span>{phaseLabel(round === 'decidir_2' ? 'decidir_2' : 'decidir')}</span>
-      </div>
-
-      {pendientes.length === 0 && (
-        <Panel titulo="Ronda completa" icono="check_circle">
-          Ya decidiste todas las situaciones de esta ronda. Espera al Host para el siguiente paso.
-        </Panel>
-      )}
-
-      {pendientes.slice(0, 1).map((escenario) => (
-        <div key={escenario.id} className="flex flex-col gap-3 anim-rise">
-          <section className="flex flex-col gap-2 p-4 rounded-xl bg-bg-surface border border-border-subtle shadow-md">
-            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-container-high w-fit">
-              <span className="material-symbols-outlined text-[14px] text-accent-electricidad">
-                {escenario.icon}
-              </span>
-              <span className="font-label-sm text-label-sm text-text-secondary uppercase">
-                SITUACIÓN {resueltos + 1} DE {escenarios.length}
-              </span>
-            </div>
-            <h2 className="font-headline-md text-headline-md text-text-primary tracking-tight font-bold">
-              {escenario.title}
-            </h2>
-            <p className="font-body-sm text-body-sm text-text-secondary">{escenario.prompt}</p>
-          </section>
-
-          <div className="flex flex-col gap-3 anim-stagger">
-            {escenario.options.map((option) => {
-              const hint = impactHint(option.effect);
-              return (
-                <button
-                  key={option.id}
-                  type="button"
-                  disabled={pending !== null}
-                  onClick={() => void onDecide(option.id, clave(escenario.id), round)}
-                  className="min-h-[58px] p-3.5 rounded-xl border border-border-subtle bg-bg-surface text-left flex flex-col gap-2 anim-tactile disabled:opacity-60"
-                >
-                  <span className="font-label-md text-label-md font-bold text-text-primary">
-                    {option.label}
-                  </span>
-                  <span className="flex gap-3 font-label-sm text-[11px] text-text-secondary">
-                    <span>
-                      Consumo:{' '}
-                      <strong className={hint.consumo === 'igual' ? 'text-text-primary' : 'text-accent-eficiencia'}>
-                        {CONSUMO_LABEL[hint.consumo]}
-                      </strong>
-                    </span>
-                    <span>{CONFORT_LABEL[hint.confort]}</span>
-                  </span>
-                </button>
-              );
-            })}
+      <div key={visible.id} className="flex flex-col gap-3 anim-rise">
+        <section className="flex flex-col gap-2 p-4 rounded-xl bg-bg-surface border border-border-subtle shadow-md">
+          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-container-high w-fit">
+            <span className="material-symbols-outlined text-[14px] text-accent-electricidad">
+              {visible.icon}
+            </span>
+            <span className="font-label-sm text-label-sm text-text-secondary uppercase">
+              SITUACIÓN {numero} DE {total}
+            </span>
           </div>
+          <h2 className="font-headline-md text-headline-md text-text-primary tracking-tight font-bold">
+            {visible.title}
+          </h2>
+          <p className="font-body-sm text-body-sm text-text-secondary">{visible.prompt}</p>
+        </section>
+
+        <div className="flex flex-col gap-3 anim-stagger">
+          {visible.options.map((option, i) => (
+            <ChoiceButton
+              key={option.id}
+              optionId={option.id}
+              label={option.label}
+              consumo={CONSUMO_LABEL[impactHint(option.effect).consumo]}
+              ahorra={impactHint(option.effect).consumo !== 'igual'}
+              confort={CONFORT_LABEL[impactHint(option.effect).confort]}
+              index={i}
+              state={
+                pending === option.id
+                  ? 'sending'
+                  : confirmada === option.id
+                    ? 'confirmed'
+                    : rechazadoId === option.id
+                      ? 'rejected'
+                      : pending !== null || bloqueada
+                        ? 'muted'
+                        : 'idle'
+              }
+              disabled={pending !== null || bloqueada}
+              reason={rechazadoId === option.id ? rechazo?.reason ?? null : null}
+              effect={confirmada === option.id ? efectoConfirmado : null}
+              onSelect={seleccionar}
+            />
+          ))}
         </div>
-      ))}
+      </div>
+    </div>
+  );
+}
+
+function BarraComparacion({
+  etiqueta,
+  valor,
+  pct,
+  color,
+}: {
+  etiqueta: string;
+  valor: number | null;
+  /** Proporción real frente al máximo de las dos barras (0-1). */
+  pct: number;
+  color: string;
+}) {
+  const seguro = Math.max(0, Math.min(1, Number.isFinite(pct) ? pct : 0));
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center justify-between font-label-sm text-[10px] uppercase tracking-wider">
+        <span className="text-text-secondary">{etiqueta}</span>
+        <span className="text-text-primary font-bold tabular-nums">
+          {valor === null ? '—' : <AnimatedNumber value={valor} format={kwh} duration={760} contarDesdeCero />}
+        </span>
+      </div>
+      <div className="h-2 w-full overflow-hidden rounded-full border border-border-subtle bg-bg-primary">
+        <div
+          className={`h-full origin-left rounded-full anim-bar ${color}`}
+          style={{ width: `${seguro * 100}%` }}
+        />
+      </div>
     </div>
   );
 }
 
 function Resultados({
   team,
-  puesto,
+  fila,
   total,
   promedioEficiencia,
   promedioConsumo,
-  puntos,
 }: {
   team: TeamState;
-  puesto: number | null;
+  fila: TeamResult | null;
   total: number | null;
   promedioEficiencia: number | null;
   promedioConsumo: number | null;
-  puntos: number;
 }) {
+  const puesto = fila?.rank ?? null;
+  const puntos = fila?.puntos ?? team.puntos;
   const mejorQuePromedio = promedioConsumo !== null && team.electricidad <= promedioConsumo;
+  const campeon = puesto === 1;
+  const ultimo = puesto !== null && total !== null && total > 1 && puesto === total;
+  const etiqueta = campeon
+    ? 'Primer puesto del aula'
+    : ultimo
+      ? 'Último puesto del aula'
+      : 'Zona media del aula';
+  const piezasConfeti = campeon ? 26 : puesto !== null && puesto <= 3 ? 10 : 0;
+  const escala = Math.max(team.electricidad, promedioConsumo ?? 0, 0.01);
+
   return (
     <div className="flex flex-col gap-4 anim-fade">
-      <section className="rounded-xl bg-bg-surface border border-border-subtle p-5 flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <h1 className="font-headline-md text-headline-md font-bold uppercase">Resultado final</h1>
-          {/* Revelado del puesto: entra después de las tarjetas, no al mismo tiempo. */}
+      <Celebration piezas={piezasConfeti} />
+
+      <section
+        className={`relative overflow-hidden rounded-xl bg-bg-surface border p-5 flex flex-col gap-3 ${
+          campeon
+            ? 'border-accent-electricidad/70'
+            : ultimo
+              ? 'border-accent-crisis/50'
+              : 'border-border-subtle'
+        }`}
+      >
+        {campeon && (
           <span
-            className="font-metric-display-mobile text-metric-display-mobile text-accent-eficiencia font-bold tabular-nums anim-reveal"
-            style={{ animationDelay: '200ms' }}
-          >
-            {puesto ? `#${puesto}` : '—'}
+            className="pointer-events-none absolute inset-0 bg-gradient-to-br from-accent-electricidad/30 via-transparent to-transparent anim-flash-close"
+            aria-hidden
+          />
+        )}
+        <div className="relative flex items-baseline justify-between gap-3">
+          <div className="flex flex-col">
+            <h1 className="font-headline-md text-headline-md font-bold uppercase">Resultado final</h1>
+            <span
+              className={`font-label-sm text-label-sm uppercase tracking-wider ${
+                campeon
+                  ? 'text-accent-electricidad'
+                  : ultimo
+                    ? 'text-accent-crisis'
+                    : 'text-text-secondary'
+              }`}
+            >
+              {etiqueta}
+            </span>
+          </div>
+          {/* El puesto entra con contador propio después de las tarjetas. */}
+          <span className="anim-podium-in flex items-baseline gap-1">
+            <span
+              className={`material-symbols-outlined text-[22px] ${
+                campeon ? 'text-accent-electricidad' : 'text-accent-eficiencia'
+              }`}
+            >
+              emoji_events
+            </span>
+            <span
+              className={`font-metric-display-mobile text-metric-display-mobile font-bold tabular-nums ${
+                campeon
+                  ? 'text-accent-electricidad'
+                  : ultimo
+                    ? 'text-accent-crisis'
+                    : 'text-accent-eficiencia'
+              }`}
+            >
+              {puesto !== null ? (
+                <AnimatedNumber
+                  value={puesto}
+                  format={(valor) => `#${Math.round(valor)}`}
+                  duration={900}
+                  contarDesdeCero
+                />
+              ) : (
+                '—'
+              )}
+            </span>
             <span className="text-[14px] text-text-secondary">/{total ?? '—'}</span>
           </span>
         </div>
-        <div className="grid grid-cols-2 gap-2 font-label-sm anim-stagger">
+
+        <div className="relative grid grid-cols-2 gap-2 font-label-sm anim-stagger">
           <Dato
             etiqueta="Electricidad"
             valor={kwh(team.electricidad)}
@@ -852,28 +1118,69 @@ function Resultados({
             formato={(valor) => String(Math.round(valor))}
             contarDesdeCero
           />
+          {fila && (
+            <Dato
+              etiqueta="Ahorro vs. base"
+              valor={kwh(fila.ahorroElectricidadKwh)}
+              color="text-accent-eficiencia"
+              numero={fila.ahorroElectricidadKwh}
+              formato={kwh}
+              contarDesdeCero
+            />
+          )}
+          {fila && (
+            <Dato
+              etiqueta="Costo del consumo"
+              valor={dinero(fila.costoConsumo)}
+              color="text-accent-presupuesto"
+              numero={fila.costoConsumo}
+              formato={dinero}
+              contarDesdeCero
+            />
+          )}
         </div>
       </section>
 
-      <section className="rounded-xl bg-surface-container border border-border-subtle p-4 flex flex-col gap-2 anim-rise">
+      <section className="rounded-xl bg-surface-container border border-border-subtle p-4 flex flex-col gap-3 anim-rise">
         <h2 className="font-label-md text-label-md font-bold uppercase text-text-secondary">
           Comparación con el aula
         </h2>
-        <p className="font-body-sm text-body-sm text-text-secondary">
-          Consumo promedio del aula:{' '}
-          <strong className="text-text-primary">{promedioConsumo === null ? '—' : kwh(promedioConsumo)}</strong>
-          {' · '}
-          Eficiencia promedio:{' '}
-          <strong className="text-text-primary">
+        <BarraComparacion
+          etiqueta="Tu equipo"
+          valor={team.electricidad}
+          pct={team.electricidad / escala}
+          color={mejorQuePromedio ? 'bg-accent-eficiencia' : 'bg-accent-gas'}
+        />
+        <BarraComparacion
+          etiqueta="Promedio del aula"
+          valor={promedioConsumo}
+          pct={(promedioConsumo ?? 0) / escala}
+          color="bg-accent-presupuesto"
+        />
+        <p className="font-label-md text-label-md font-bold uppercase text-text-primary">
+          Eficiencia promedio del aula:{' '}
+          <span className="text-accent-eficiencia tabular-nums">
             {promedioEficiencia === null ? '—' : `${formatNumber(promedioEficiencia, 0)} %`}
-          </strong>
+          </span>
         </p>
         <p
-          className={`font-label-md text-label-md font-bold uppercase ${mejorQuePromedio ? 'text-accent-eficiencia' : 'text-accent-gas'}`}
+          className={`font-label-md text-label-md font-bold uppercase ${
+            mejorQuePromedio ? 'text-accent-eficiencia' : 'text-accent-gas'
+          }`}
         >
           {mejorQuePromedio
             ? 'Tu equipo consumió menos que el promedio del aula'
             : 'Tu equipo consumió más que el promedio del aula'}
+        </p>
+      </section>
+
+      <section className="rounded-xl border border-border-subtle bg-bg-surface p-4 flex flex-col gap-2 anim-rise">
+        <h2 className="font-label-md text-label-md font-bold uppercase text-text-secondary">
+          ¿Qué aprendimos?
+        </h2>
+        <p className="font-body-sm text-body-sm text-text-secondary">
+          El equipo que consiguió el mejor resultado no fue necesariamente el que dejó de consumir,
+          sino el que eliminó los consumos innecesarios manteniendo las necesidades básicas.
         </p>
       </section>
     </div>

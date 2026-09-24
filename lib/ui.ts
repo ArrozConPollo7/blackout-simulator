@@ -111,13 +111,13 @@ export const CONFORT_LABEL: Record<ImpactHint['confort'], string> = {
 export function realtimeLabel(status: RealtimeStatus): string {
   switch (status) {
     case 'suscrito':
-      return 'ENLACE EN TIEMPO REAL: OK';
+      return 'SEÑAL EN VIVO';
     case 'conectando':
-      return 'ENLACE EN TIEMPO REAL: CONECTANDO';
+      return 'RECONECTANDO…';
     case 'error':
-      return 'ENLACE EN TIEMPO REAL: DEGRADADO';
+      return 'SEÑAL DÉBIL';
     default:
-      return 'ENLACE EN TIEMPO REAL: NO CONFIGURADO';
+      return 'SIN SEÑAL';
   }
 }
 
@@ -139,3 +139,10 @@ export function formatSyncAge(lastSyncAt: number | null): string {
   const seconds = Math.max(0, Math.round((Date.now() - lastSyncAt) / 1000));
   return seconds <= 1 ? 'sincronizado ahora' : `sincronizado hace ${seconds} s`;
 }
+
+/**
+ * Código corto de sala: los equipos lo leen en el proyector y lo dicen en voz alta.
+ * Es el prefijo del identificador de la partida, no un dato inventado.
+ */
+export const salaCode = (gameId: string | null | undefined): string =>
+  gameId ? gameId.slice(0, 4).toUpperCase() : '----';

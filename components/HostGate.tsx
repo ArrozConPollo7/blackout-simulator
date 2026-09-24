@@ -10,7 +10,7 @@
 
 import React, { useState } from 'react';
 import { ApiClientError, api, describeApiError } from '@/lib/api';
-import { env, missingConfig } from '@/lib/env';
+import { env, isDevelopment, missingConfig } from '@/lib/env';
 
 export interface HostGateProps {
   onUnlock: (passcode: string) => void;
@@ -36,7 +36,7 @@ export default function HostGate({ onUnlock }: HostGateProps) {
       // siga configurado, la consola se abre con él para no dejar la clase sin proyector.
       if (cause instanceof ApiClientError && cause.status === 404 && env.hostToken) {
         setAviso(
-          'El Worker no tiene activado el control por contraseña (/host/verify no existe). Entrando con el token del bundle.',
+          'El acceso por contraseña aún no está activo en esta partida: entrando con la credencial guardada de este equipo.',
         );
         onUnlock(env.hostToken);
         return;
@@ -113,14 +113,15 @@ export default function HostGate({ onUnlock }: HostGateProps) {
           </button>
 
           <p className="font-label-sm text-label-sm text-text-secondary">
-            Contraseña por defecto <code className="text-accent-presupuesto">9806</code>; se cambia con el
-            secreto <code className="text-accent-presupuesto">HOST_PASSCODE</code> del Worker.
+            La contraseña la tiene quien monta la partida. Con ella se abren los controles del
+            proyector; sin ella, esta pantalla solo muestra datos.
           </p>
         </form>
 
-        {missingConfig.length > 0 && (
+        {isDevelopment && missingConfig.length > 0 && (
           <p className="rounded-lg border border-accent-gas/40 bg-accent-gas/10 px-4 py-3 font-label-sm text-label-sm">
-            Configuración incompleta: falta {missingConfig.join(', ')}.
+            Configuración incompleta (aviso solo visible en desarrollo): falta{' '}
+            {missingConfig.join(', ')}.
           </p>
         )}
       </div>

@@ -19,31 +19,48 @@ import RankingIndicator from '@/components/RankingIndicator';
 import HostGate from '@/components/HostGate';
 import JoinQr from '@/components/JoinQr';
 import SoundToggle from '@/components/SoundToggle';
+import AnimatedNumber from '@/components/play/AnimatedNumber';
+import GridMeter from '@/components/host/GridMeter';
+import DecisionFeed from '@/components/host/DecisionFeed';
+import PodiumBurst from '@/components/host/PodiumBurst';
 import { audio, useAudioEvent, useSoundEnabled } from '@/lib/audio';
 import { CONSUMO_REFERENCIA_ELECTRICIDAD, PRESUPUESTO_INICIAL } from '@/content/economy';
 import { CASE_CATALOG } from '@/content/cases';
+import { ROUND2_SCENARIOS } from '@/content/decisions';
 import { compareTeams } from '@/engine/results';
 import { api, describeApiError, setRuntimeHostToken } from '@/lib/api';
-import { missingConfig } from '@/lib/env';
+import { isDevelopment, missingConfig } from '@/lib/env';
 import { clearHostPass, readHostPass, writeHostPass } from '@/lib/host-auth';
 import { readActiveGame, resolveGameId, writeActiveGame } from '@/lib/game-store';
-import { useGameState, useRemainingMs } from '@/lib/useGameState';
+import { useGameState } from '@/lib/useGameState';
 import {
+  formatNumber,
   hostPhaseOf,
   phaseCode,
   phaseLabel,
+  realtimeLabel,
+  salaCode,
   siguienteEtiqueta,
   type PhaseStep,
 } from '@/lib/ui';
 import type { RankingTrend } from '@/types/game';
+
+/** Suceso real para la tira de actividad del proyector (nada inventado). */
+interface FeedEvent {
+  id: string;
+  team: string;
+  color: string;
+  texto: string;
+  at: number;
+}
 
 // El vecindario 3D solo existe en la pantalla del Host y nunca se renderiza en servidor.
 const NeighborhoodStage = dynamic(() => import('@/components/NeighborhoodStage'), {
   ssr: false,
   loading: () => (
     <div className="w-full h-[420px] rounded-xl border border-border-subtle bg-bg-surface flex items-center justify-center">
-      <span className="font-label-md text-label-md text-text-secondary uppercase">
-        Inicializando vecindario 3D…
+      <span className="font-label-md text-label-md text-text-secondary uppercase anim-pulse-urgent">
+        Levantando el barrio…
       </span>
     </div>
   ),
@@ -60,10 +77,18 @@ function HostConsole() {
   const [passcode, setPasscode] = useState<string | null>(null);
   /** true mientras se revalida la contraseña recordada de esta pestaña. */
   const [revisando, setRevisando] = useState(true);
+  /** La revalidación tarda demasiado: se le dice al anfitrión qué hacer. */
+  const [revisandoLento, setRevisandoLento] = useState(false);
   const [slots, setSlots] = useState<number | null>(null);
   const [nuevoEquipo, setNuevoEquipo] = useState('');
   /** URL absoluta del registro de mesas: es lo que codifica el QR del proyector. */
   const [joinUrl, setJoinUrl] = useState<string | null>(null);
+  /** La consola no es interactiva hasta que React toma el control: evita el "hay que pulsar dos veces". */
+  const [montado, setMontado] = useState(false);
+  /** Tira de actividad del proyector (sucesos reales, se conservan los últimos). */
+  const [feed, setFeed] = useState<FeedEvent[]>([]);
+  /** Toma de pantalla al cambiar de ronda. */
+  const [toma, setToma] = useState<{ codigo: string; titulo: string; sub: string } | null>(null);
 
   const connection = useGameState(gameId);
   const state = connection.state;
@@ -222,8 +247,35 @@ function HostConsole() {
     });
     return map;
   }, [ranking]);
+  const primerRanking = useRef(true);
   useEffect(() => {
+    // Cambio de puesto = momento de celebración (patrón de marcador de concurso): se
+    // anuncia solo cuando el orden cambia de verdad, con el delta real.
+    const eventos: FeedEvent[] = [];
+    ranking.forEach((team, index) => {
+      const antes = previousRanks.current.get(team.id);
+      if (antes === undefined || antes === index) return;
+      const delta = antes - index;
+      eventos.push({
+        id: `${team.id}:puesto:${index}:${Date.now()}`,
+        team: team.name,
+        color: team.color,
+        texto:
+          delta > 1
+            ? `subió ${delta} puestos`
+            : delta === 1
+              ? 'subió un puesto'
+              : delta === -1
+                ? 'bajó un puesto'
+                : `bajó ${Math.abs(delta)} puestos`,
+        at: Date.now(),
+      });
+    });
     previousRanks.current = new Map(ranking.map((team, index) => [team.id, index]));
+    if (!primerRanking.current && eventos.length > 0) {
+      setFeed((previo) => [...eventos, ...previo].slice(0, 6));
+    }
+    primerRanking.current = false;
   }, [ranking]);
 
   const consumoTotal = (state?.teams ?? []).reduce((acc, team) => acc + team.electricidad, 0);
@@ -237,12 +289,20 @@ function HostConsole() {
     (acc, team) => acc + (PRESUPUESTO_INICIAL - team.presupuesto),
     0,
   );
-  const decidieron = state
-    ? state.teams.filter((team) => {
-        const pendientes = (state.cases[team.id]?.appliances.length ?? 0) + 6 + 1;
-        return (state.answered[team.id]?.length ?? 0) >= Math.min(pendientes, 1);
-      }).length
+  /* Ronda en curso y avance del aula (todo sale del estado real) */
+  const rondaActual =
+    phase === 'investigar' ? 1 : phase === 'decidir' ? 2 : phase === 'crisis' ? 3 : phase === 'decidir_2' ? 4 : 0;
+  const prefijoRonda =
+    phase === 'investigar' ? 'r1:' : phase === 'decidir' ? 'r2:' : phase === 'decidir_2' ? 'r2b' : null;
+  const mesasQueDecidieron = prefijoRonda
+    ? (state?.teams ?? []).filter((team) =>
+        (state?.answered[team.id] ?? []).some((clave) => clave.startsWith(prefijoRonda)),
+      ).length
     : 0;
+  const decisionesTotales = (state?.teams ?? []).reduce(
+    (acc, team) => acc + (state?.answered[team.id]?.length ?? 0),
+    0,
+  );
 
   const hostPhase = hostPhaseOf(phase);
   const isCrisis = hostPhase === 'crisis' || Boolean(state?.crisisTriggered);
@@ -253,40 +313,99 @@ function HostConsole() {
     Boolean(state) && phase !== 'resultados' && equiposDentro < CASE_CATALOG.length;
 
   /* ------------------------------------------------------------------ */
-  /* Sonido del proyector (lib/audio.ts): sintetizado, sin archivos      */
+  /* Vida de la consola: sonido, actividad del aula y tomas de pantalla   */
   /* ------------------------------------------------------------------ */
+
+  // La consola no responde a clics hasta que React toma el control del HTML servido.
+  useEffect(() => {
+    setMontado(true);
+  }, []);
+
+  // Si la revalidación no termina en 8 s (red del aula, recarga a medias), se avisa.
+  useEffect(() => {
+    if (!revisando) return undefined;
+    const id = setTimeout(() => setRevisandoLento(true), 8000);
+    return () => clearTimeout(id);
+  }, [revisando]);
 
   const [soundOn] = useSoundEnabled();
   const play = useAudioEvent();
-  const remaining = useRemainingMs(state?.timerEndsAt ?? null, phase, connection.clockSkewMs);
   const faseSonada = useRef<typeof phase>(undefined);
-  const equiposSonados = useRef(0);
+  const logros = useRef(new Set<string>());
+  const primeraFoto = useRef(true);
   const avisoTiempoDe = useRef<typeof phase>(undefined);
 
   // Cambio de fase: relay para abrir ronda, sirena al caer la crisis, fanfarria en el podio.
   useEffect(() => {
     const anterior = faseSonada.current;
     faseSonada.current = phase;
-    if (!soundOn || !phase || anterior === undefined || anterior === phase) return;
+    if (!phase || anterior === undefined || anterior === phase) return undefined;
     if (phase === 'crisis') play('crisis');
     else if (phase === 'resultados') play('podium');
     else play('phase');
-  }, [phase, play, soundOn]);
 
-  // Cada mesa que entra (QR o alta manual) se anuncia con un tono breve.
+    if (phase !== 'resultados') {
+      setFeed((previo) =>
+        [
+          {
+            id: `ronda:${phase}:${Date.now()}`,
+            team: 'La red',
+            color: '#3EC6F0',
+            texto: phaseLabel(phase).toLowerCase(),
+            at: Date.now(),
+          },
+          ...previo,
+        ].slice(0, 6),
+      );
+    }
+
+    // La crisis ya tiene su propia toma de pantalla (CrisisOverlay): no se duplica.
+    if (phase === 'lobby' || phase === 'resultados' || phase === 'crisis') return undefined;
+    const ronda = phase === 'investigar' ? 1 : phase === 'decidir' ? 2 : 4;
+    setToma({
+      codigo: `RONDA ${ronda} DE 4`,
+      titulo: phase === 'investigar' ? 'HORA DE AUDITAR' : 'HORA DE DECIDIR',
+      sub: phaseLabel(phase),
+    });
+    const cerrar = setTimeout(() => setToma(null), 2800);
+    return () => clearTimeout(cerrar);
+  }, [phase, play]);
+
+  // Actividad del aula: cada suceso sale del estado real (mesas dentro y rondas cerradas).
   useEffect(() => {
-    const total = state?.teams.length ?? 0;
-    const antes = equiposSonados.current;
-    equiposSonados.current = total;
-    if (!soundOn || total <= antes || antes === 0) return;
-    play('join');
-  }, [play, soundOn, state?.teams.length]);
+    if (!state) return;
+    const nuevos: FeedEvent[] = [];
+    for (const team of state.teams) {
+      const answered = state.answered[team.id] ?? [];
+      const aparatos = state.cases[team.id]?.appliances.length ?? 0;
+      const marcas: Array<[string, boolean, string]> = [
+        [`${team.id}:r1`, aparatos > 0 && answered.filter((k) => k.startsWith('r1:')).length >= aparatos, 'terminó la auditoría'],
+        [`${team.id}:r2`, answered.filter((k) => k.startsWith('r2:')).length >= ROUND2_SCENARIOS.length, 'completó sus decisiones'],
+        [`${team.id}:r2b`, answered.includes('r2b'), 'cerró sus últimas decisiones'],
+      ];
+      for (const [clave, logrado, texto] of marcas) {
+        if (!logrado || logros.current.has(clave)) continue;
+        logros.current.add(clave);
+        // En la primera foto (recarga del proyector) se marcan sin anunciar: nadie acaba de decidir.
+        if (primeraFoto.current) continue;
+        nuevos.push({
+          id: `${clave}:${Date.now()}`,
+          team: team.name,
+          color: team.color,
+          texto,
+          at: Date.now(),
+        });
+      }
+    }
+    primeraFoto.current = false;
+    if (nuevos.length > 0) setFeed((previo) => [...nuevos.reverse(), ...previo].slice(0, 6));
+  }, [state]);
 
   // Zumbido de subestación mientras la sesión está viva; sube de tensión en la crisis.
   useEffect(() => {
     if (!soundOn) {
       audio.stopAmbient();
-      return;
+      return undefined;
     }
     audio.startAmbient();
     return () => audio.stopAmbient();
@@ -296,20 +415,38 @@ function HostConsole() {
     audio.setCrisis(hostPhase === 'crisis');
   }, [hostPhase]);
 
-  // Últimos 10 segundos de una fase cronometrada: un tic doble por fase.
+  // Aviso de los últimos 10 s: se calcula en un intervalo que NO re-renderiza la consola
+  // (antes era un tick de 4 Hz que volvía a pintar el proyector entero, vecindario incluido).
   useEffect(() => {
-    if (!soundOn || remaining === null || remaining > 10_000) return;
-    if (avisoTiempoDe.current === phase) return;
-    avisoTiempoDe.current = phase;
-    play('timeLow');
-  }, [phase, play, remaining, soundOn]);
+    if (!soundOn || !state?.timerEndsAt) return undefined;
+    const fin = Date.parse(state.timerEndsAt);
+    if (!Number.isFinite(fin)) return undefined;
+    const id = setInterval(() => {
+      const quedan = fin - (Date.now() + connection.clockSkewMs);
+      if (quedan > 0 && quedan <= 10_000 && avisoTiempoDe.current !== phase) {
+        avisoTiempoDe.current = phase;
+        audio.play('timeLow');
+      }
+    }, 500);
+    return () => clearInterval(id);
+  }, [connection.clockSkewMs, phase, soundOn, state?.timerEndsAt]);
 
   // Sin contraseña no hay consola: el proyector es público, los controles no.
   if (!passcode) {
     if (revisando) {
       return (
-        <main className="min-h-screen bg-bg-primary text-text-primary flex items-center justify-center font-label-md text-label-md uppercase tracking-wider">
-          Revalidando credencial del proyector…
+        <main className="min-h-screen bg-bg-primary text-text-primary flex flex-col items-center justify-center gap-3 px-6 text-center">
+          <span className="material-symbols-outlined text-[30px] text-accent-presupuesto animate-spin">
+            progress_activity
+          </span>
+          <span className="font-label-md text-label-md uppercase tracking-wider">
+            Revalidando credencial del proyector…
+          </span>
+          {revisandoLento && (
+            <span className="font-label-sm text-label-sm text-text-secondary">
+              Está tardando más de lo normal: si no avanza, recarga la página.
+            </span>
+          )}
         </main>
       );
     }
@@ -348,6 +485,31 @@ function HostConsole() {
         }
       />
 
+      {/* Toma de pantalla al abrir una ronda: el salón entero ve el cambio */}
+      {toma && (
+        <div className="pointer-events-none fixed left-0 right-0 top-24 z-40 flex justify-center px-6 anim-slide-in">
+          <div className="w-full max-w-[1100px] rounded-2xl border border-accent-presupuesto/50 bg-bg-surface/95 backdrop-blur px-8 py-5 shadow-2xl flex flex-wrap items-center gap-x-6 gap-y-2">
+            <span className="font-label-md text-label-md uppercase tracking-[0.35em] text-accent-presupuesto">
+              {toma.codigo}
+            </span>
+            <span className="font-headline-lg text-headline-lg font-bold uppercase tracking-tight text-text-primary">
+              {toma.titulo}
+            </span>
+            <span className="ml-auto font-label-sm text-label-sm uppercase tracking-wider text-text-secondary">
+              {toma.sub}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Alerta ambiental: tiñe el borde de la pantalla en crisis, sin tapar nada */}
+      {isCrisis && (
+        <div
+          aria-hidden
+          className="pointer-events-none fixed inset-0 z-30 anim-pulse-urgent bg-[radial-gradient(120%_100%_at_50%_50%,transparent_58%,rgba(255,59,78,0.20)_100%)]"
+        />
+      )}
+
       <main className="w-full pt-24 pb-16 px-margin-desktop flex-1 flex flex-col gap-4 max-w-[1920px] mx-auto">
         {/* Barra de estado y errores */}
         <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-border-subtle">
@@ -356,31 +518,47 @@ function HostConsole() {
               <span className="material-symbols-outlined text-[16px] text-accent-presupuesto">
                 sensors
               </span>
-              {state ? `PARTIDA ${state.gameId.slice(0, 8).toUpperCase()}` : 'SIN PARTIDA ACTIVA'}
+              {state ? `SALA ${salaCode(state.gameId)}` : 'SIN PARTIDA ACTIVA'}
             </span>
             {state && (
               <>
                 <span className="text-border-subtle">/</span>
                 <span>EQUIPOS {state.teams.length}</span>
                 <span className="text-border-subtle">/</span>
-                <span>
+                <span className="flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[15px] text-accent-electricidad">
+                    bolt
+                  </span>
                   CONSUMO DEL AULA{' '}
-                  <strong className="text-accent-electricidad tabular-nums">
-                    {consumoTotal.toFixed(2)} kWh
+                  <strong className="text-accent-electricidad">
+                    <AnimatedNumber
+                      value={consumoTotal}
+                      format={(v) => `${formatNumber(v, 2)} kWh`}
+                    />
                   </strong>
                 </span>
                 <span className="text-border-subtle">/</span>
-                <span>
+                <span className="flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[15px] text-accent-presupuesto">
+                    account_balance_wallet
+                  </span>
                   GASTO ACUMULADO{' '}
-                  <strong className="text-accent-presupuesto tabular-nums">
-                    ${gastoTotal.toLocaleString('es-CO')}
+                  <strong className="text-accent-presupuesto">
+                    <AnimatedNumber value={gastoTotal} format={(v) => `$ ${formatNumber(v, 0)}`} />
                   </strong>
                 </span>
                 <span className="text-border-subtle">/</span>
-                <span>
+                <span className="flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[15px] text-accent-eficiencia">
+                    speed
+                  </span>
                   EFICIENCIA MEDIA{' '}
-                  <strong className="text-accent-eficiencia tabular-nums">
-                    {eficienciaMedia === null ? '—' : `${eficienciaMedia.toFixed(1)}%`}
+                  <strong className="text-accent-eficiencia">
+                    {eficienciaMedia === null ? (
+                      '—'
+                    ) : (
+                      <AnimatedNumber value={eficienciaMedia} format={(v) => `${formatNumber(v, 1)}%`} />
+                    )}
                   </strong>
                 </span>
               </>
@@ -388,13 +566,17 @@ function HostConsole() {
           </div>
 
           <div className="flex items-center gap-2 font-label-sm text-label-sm">
-            <span className="text-text-secondary uppercase">
+            <span
+              className={`uppercase ${
+                connection.status === 'error' ? 'text-accent-gas' : 'text-text-secondary'
+              }`}
+            >
               {connection.status === 'listo'
-                ? 'SINCRONIZACIÓN: OK'
+                ? realtimeLabel(connection.realtime)
                 : connection.status === 'cargando'
-                  ? 'SINCRONIZANDO…'
+                  ? 'BUSCANDO LA PARTIDA…'
                   : connection.status === 'error'
-                    ? 'SIN CONEXIÓN'
+                    ? 'SIN SEÑAL'
                     : 'ESPERANDO PARTIDA'}
             </span>
             <SoundToggle />
@@ -418,10 +600,9 @@ function HostConsole() {
           </div>
         </div>
 
-        {missingConfig.length > 0 && (
+        {isDevelopment && missingConfig.length > 0 && (
           <div className="rounded-lg border border-accent-gas/40 bg-accent-gas/10 px-4 py-3 font-label-md text-label-md text-text-primary">
-            Faltan variables de entorno: {missingConfig.join(', ')}. Copia `.env.example` a
-            `.env.local` y reinicia el servidor.
+            Aviso de desarrollo: falta {missingConfig.join(', ')}.
           </div>
         )}
         {error && (
@@ -437,34 +618,55 @@ function HostConsole() {
 
         {/* Sin partida: creación */}
         {!state && connection.status !== 'cargando' && (
-          <section className="w-full bg-bg-surface rounded-xl p-8 border border-border-subtle flex flex-col items-center gap-6 text-center">
-            <span className="material-symbols-outlined text-[42px] text-accent-presupuesto">
-              admin_panel_settings
-            </span>
-            <div className="flex flex-col gap-2">
-              <h1 className="font-headline-lg text-headline-lg font-bold uppercase">
-                Crear partida
+          <section className="relative w-full bg-bg-surface rounded-2xl p-8 lg:p-12 border border-border-subtle flex flex-col items-center gap-8 text-center overflow-hidden shadow-2xl">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-0 bg-[radial-gradient(80%_120%_at_50%_-10%,rgba(62,198,240,0.12),transparent_70%)]"
+            />
+            <div className="relative flex flex-col items-center gap-3 anim-rise">
+              <span className="material-symbols-outlined text-[48px] text-accent-presupuesto">bolt</span>
+              <h1 className="font-headline-lg text-headline-lg lg:text-headline-xl lg:text-headline-xl font-bold uppercase tracking-tight">
+                Monta la partida
               </h1>
               <p className="font-body-md text-body-md text-text-secondary max-w-xl">
-                El Worker abre la partida y reparte un caso por mesa según el orden de llegada.
-                Después verás el QR: cada equipo lo escanea, escribe su nombre y queda dentro.
+                Elige cuántas mesas van a jugar. Cada equipo entra con el código QR y escribe su
+                nombre; el caso se reparte por orden de llegada.
               </p>
             </div>
-            <div className="flex flex-wrap items-center justify-center gap-3">
+
+            <div className="relative flex flex-wrap items-center justify-center gap-4">
               {[4, 5, 6].map((count) => (
                 <button
                   key={count}
                   type="button"
-                  disabled={busy}
+                  disabled={!montado || busy}
                   onClick={() => void crearPartida(count)}
-                  className="h-12 px-6 rounded-xl bg-primary-container text-on-primary-container font-label-lg text-label-lg font-bold uppercase tracking-wider hover:opacity-90 active:scale-95 disabled:opacity-60"
+                  className="anim-tactile w-40 h-32 rounded-2xl bg-primary-container text-on-primary-container hover:opacity-90 active:scale-95 disabled:opacity-50 flex flex-col items-center justify-center gap-1 shadow-[0_12px_32px_rgba(62,198,240,0.18)]"
                 >
-                  {count} equipos
+                  <span className="font-headline-xl text-headline-xl font-bold tabular-nums leading-none">
+                    {count}
+                  </span>
+                  <span className="font-label-sm text-label-sm font-bold uppercase tracking-[0.2em]">
+                    mesas
+                  </span>
                 </button>
               ))}
             </div>
+
+            <p
+              className={`relative font-label-sm text-label-sm uppercase tracking-[0.25em] ${
+                busy ? 'text-accent-eficiencia anim-pulse-urgent' : 'text-text-secondary'
+              }`}
+            >
+              {!montado
+                ? 'Preparando la consola…'
+                : busy
+                  ? 'Montando la sala…'
+                  : 'Elige el tamaño de la partida'}
+            </p>
+
             {connection.error && (
-              <p className="font-body-sm text-body-sm text-accent-gas">{connection.error}</p>
+              <p className="relative font-body-sm text-body-sm text-accent-gas">{connection.error}</p>
             )}
           </section>
         )}
@@ -477,26 +679,27 @@ function HostConsole() {
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center gap-3">
                     <span className="w-2.5 h-2.5 rounded-full bg-accent-eficiencia animate-ping"></span>
-                    <span className="font-label-sm text-label-sm text-text-secondary tracking-widest uppercase">
-                      ENLACE DE RED OPERATIVO
+                    <span className="font-label-sm text-label-sm text-text-secondary tracking-[0.3em] uppercase">
+                      REGISTRO ABIERTO · RONDA 0 DE 4
                     </span>
                   </div>
                   <h1 className="font-headline-lg text-headline-lg text-text-primary tracking-tight uppercase font-bold">
-                    Lobby — cada mesa entra con su nombre
+                    Que cada mesa entre y ponga su nombre
                   </h1>
                   <p className="font-body-md text-body-md text-text-secondary max-w-2xl">
                     Proyecta el código QR: cada equipo lo escanea, escribe el nombre de su mesa y
-                    recibe un caso con consumos ocultos. Abre la primera ronda cuando estén dentro.
+                    recibe su instalación con consumos ocultos. Abre la primera ronda cuando estén
+                    todas dentro.
                   </p>
                 </div>
                 <div className="flex items-center gap-5 shrink-0">
                   <div className="text-right">
                     <span className="block font-label-sm text-label-sm text-text-secondary uppercase tracking-wider">
-                      Equipos dentro
+                      Mesas dentro
                     </span>
-                    <span className="font-headline-lg text-headline-lg font-bold tabular-nums text-text-primary">
+                    <span className="font-headline-xl text-headline-xl font-bold tabular-nums text-text-primary leading-none">
                       {equiposDentro}
-                      <span className="text-[18px] text-text-secondary">/{slotsEsperados}</span>
+                      <span className="text-[22px] text-text-secondary">/{slotsEsperados}</span>
                     </span>
                   </div>
                   <button
@@ -508,10 +711,12 @@ function HostConsole() {
                         'Fase de investigación abierta.',
                       )
                     }
-                    className="h-12 px-8 rounded-xl bg-primary-container text-on-primary-container font-label-lg text-label-lg font-bold uppercase tracking-wider shadow-lg hover:opacity-90 active:scale-95 disabled:opacity-60 flex items-center gap-2"
+                    className={`h-14 px-9 rounded-xl bg-primary-container text-on-primary-container font-label-lg text-label-lg font-bold uppercase tracking-wider shadow-lg hover:opacity-90 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 anim-tactile ${
+                      equiposDentro > 0 && !busy ? 'anim-pulse-urgent' : ''
+                    }`}
                   >
-                    <span className="material-symbols-outlined text-[20px]">play_arrow</span>
-                    <span>Iniciar juego</span>
+                    <span className="material-symbols-outlined text-[22px]">play_arrow</span>
+                    <span>{busy ? 'Abriendo…' : 'Iniciar juego'}</span>
                   </button>
                 </div>
               </div>
@@ -559,83 +764,69 @@ function HostConsole() {
                 </div>
               </section>
 
-              {/* Mesas registradas */}
-              <section className="flex flex-col gap-3">
+              {/* Marcador de mesas: se va llenando conforme entran */}
+              <section className="flex flex-col gap-4">
                 <div className="flex items-center justify-between font-label-sm text-label-sm text-text-secondary uppercase tracking-wider">
-                  <span>Mesas registradas</span>
-                  <span className="tabular-nums">
-                    {equiposDentro} de {slotsEsperados}
-                  </span>
+                  <span>Mesas en la sala</span>
+                  <span className="tabular-nums">{equiposDentro} / {slotsEsperados}</span>
                 </div>
 
-                {state.teams.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-border-subtle p-10 flex flex-col items-center gap-3 text-center">
-                    <span className="material-symbols-outlined text-[32px] text-text-secondary">
-                      qr_code_2
-                    </span>
-                    <p className="font-label-md text-label-md text-text-secondary uppercase">
-                      Todavía no hay ninguna mesa dentro
-                    </p>
-                    <p className="font-body-sm text-body-sm text-text-secondary max-w-md">
-                      Que la primera escanee el QR del proyector. El caso se asigna por orden de
-                      llegada, así que dos equipos nunca repiten instalación.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {state.teams.map((team, index) => {
-                      const caso = state.cases[team.id];
-                      const url = `/play/${team.id}?game=${state.gameId}`;
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 anim-stagger">
+                  {Array.from({ length: slotsEsperados }).map((_, index) => {
+                    const team = state.teams[index];
+                    if (!team) {
                       return (
                         <div
-                          key={team.id}
-                          className="bg-bg-surface rounded-xl p-5 border border-border-subtle shadow-lg flex flex-col gap-3"
+                          key={`libre-${index}`}
+                          className="rounded-xl border border-dashed border-border-subtle/80 p-4 min-h-[104px] flex items-center gap-3"
                         >
-                          <div className="flex items-center justify-between pb-3 border-b border-border-subtle">
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div
-                                className="w-3.5 h-3.5 rounded-full shrink-0"
-                                style={{ backgroundColor: team.color }}
-                              ></div>
-                              <div className="min-w-0">
-                                <span className="font-label-sm text-[11px] text-text-secondary uppercase block">
-                                  MESA {String(index + 1).padStart(2, '0')}
-                                </span>
-                                <h2 className="font-headline-sm font-bold text-text-primary uppercase truncate">
-                                  {team.name}
-                                </h2>
-                              </div>
-                            </div>
-                            <span className="px-2 py-0.5 rounded bg-accent-eficiencia/10 border border-accent-eficiencia/30 text-accent-eficiencia font-label-sm text-label-sm font-bold uppercase">
-                              DENTRO
+                          <span className="font-headline-lg text-headline-lg font-bold tabular-nums text-text-secondary/40">
+                            {String(index + 1).padStart(2, '0')}
+                          </span>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-label-md text-label-md uppercase text-text-secondary">
+                              Mesa libre
+                            </span>
+                            <span className="font-label-sm text-[11px] text-text-secondary/70 uppercase tracking-wider">
+                              esperando al equipo…
                             </span>
                           </div>
-
-                          <div className="bg-surface-container-lowest p-3 rounded-lg flex flex-col gap-1 border border-border-subtle">
-                            <span className="font-label-sm text-label-sm text-text-secondary">
-                              CASO ASIGNADO
-                            </span>
-                            <span className="font-label-md text-label-md text-text-primary font-bold truncate">
-                              {caso?.name ?? 'pendiente'}
-                            </span>
-                            <span className="font-label-sm text-[11px] text-text-secondary">
-                              {caso
-                                ? `${caso.appliances.length} aparatos · ${caso.hiddenProblems.length} consumos ocultos`
-                                : ''}
-                            </span>
-                          </div>
-
-                          <a
-                            href={url}
-                            className="font-label-sm text-[11px] text-accent-presupuesto break-all hover:underline"
-                          >
-                            {url}
-                          </a>
                         </div>
                       );
-                    })}
-                  </div>
-                )}
+                    }
+                    const caso = state.cases[team.id];
+                    const url = `/play/${team.id}?game=${state.gameId}`;
+                    return (
+                      <div
+                        key={team.id}
+                        className="rounded-xl border bg-bg-surface p-4 min-h-[104px] flex flex-col gap-2 shadow-lg"
+                        style={{ borderColor: `${team.color}66` }}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span
+                            className="w-2.5 h-2.5 rounded-full shrink-0 animate-pulse"
+                            style={{ backgroundColor: team.color }}
+                          ></span>
+                          <span className="font-headline-sm font-bold uppercase truncate">
+                            {team.name}
+                          </span>
+                          <span className="ml-auto shrink-0 px-1.5 py-0.5 rounded bg-accent-eficiencia/15 border border-accent-eficiencia/30 font-label-sm text-[10px] font-bold uppercase text-accent-eficiencia">
+                            dentro
+                          </span>
+                        </div>
+                        <span className="font-label-sm text-[11px] text-text-secondary uppercase tracking-wider">
+                          Mesa {String(index + 1).padStart(2, '0')} · {caso?.name ?? 'caso pendiente'}
+                        </span>
+                        <a
+                          href={url}
+                          className="font-label-sm text-[10px] text-accent-presupuesto break-all hover:underline"
+                        >
+                          {url}
+                        </a>
+                      </div>
+                    );
+                  })}
+                </div>
               </section>
             </div>
           </div>
@@ -649,29 +840,69 @@ function HostConsole() {
               <CrisisOverlay cargaLineaPct={cargaLineaPct} />
             )}
 
-            <div className="w-full bg-bg-surface border border-border-subtle rounded-xl px-4 py-2.5 flex items-center justify-between shadow-md">
+            <div className="w-full rounded-2xl border border-border-subtle bg-bg-surface px-5 py-3.5 flex flex-wrap items-center gap-x-6 gap-y-3 shadow-lg">
               <div className="flex items-center gap-3">
                 <span
-                  className={`w-2 h-2 rounded-full ${hostPhase === 'crisis' ? 'bg-accent-crisis animate-ping' : 'bg-accent-eficiencia animate-pulse'}`}
-                ></span>
-                <span className="font-label-sm text-label-sm text-text-secondary uppercase tracking-wider font-semibold">
-                  {phaseLabel(phase)} ·{' '}
+                  className={`px-3 py-1.5 rounded-xl border font-headline-sm font-bold uppercase tracking-wider ${
+                    hostPhase === 'crisis'
+                      ? 'border-accent-crisis/60 bg-accent-crisis/15 text-accent-crisis anim-pulse-urgent'
+                      : 'border-primary-container/40 bg-primary-container/10 text-accent-presupuesto'
+                  }`}
+                >
+                  {rondaActual > 0 ? `Ronda ${rondaActual} de 4` : 'En pista'}
                 </span>
-                <span className="font-body-md text-body-md text-text-primary">
-                  {phase === 'investigar'
-                    ? 'Los equipos están inspeccionando sus aparatos.'
-                    : phase === 'decidir'
-                      ? 'Los equipos eligen cómo usar sus aparatos.'
-                      : phase === 'crisis'
-                        ? 'Alza tarifaria aplicada: el recargo ya está en cada equipo.'
-                        : 'Últimas decisiones bajo crisis.'}
+                <span className="font-headline-sm font-bold uppercase text-text-primary">
+                  {phaseLabel(phase)}
                 </span>
               </div>
-              <div className="hidden sm:flex items-center gap-2 font-label-sm text-label-sm text-text-secondary">
-                <span>EFICIENCIA MEDIA {eficienciaMedia === null ? '—' : `${eficienciaMedia.toFixed(1)}%`}</span>
-                <span>•</span>
-                <span>DECISIONES REGISTRADAS {state.teams.reduce((acc, t) => acc + (state.answered[t.id]?.length ?? 0), 0)}</span>
+
+              <span className="font-body-md text-body-md text-text-secondary">
+                {phase === 'investigar'
+                  ? 'Las mesas están cazando los consumos ocultos de su instalación.'
+                  : phase === 'decidir'
+                    ? 'Cada mesa elige cómo usar sus aparatos.'
+                    : phase === 'crisis'
+                      ? 'El recargo del 30% ya está aplicado sobre el consumo acumulado.'
+                      : phase === 'decidir_2'
+                        ? 'Últimas decisiones: la red no perdona dos veces.'
+                        : 'La sala está en marcha.'}
+              </span>
+
+              <div className="ml-auto flex items-center gap-5 font-label-sm text-label-sm uppercase tracking-wider text-text-secondary">
+                {prefijoRonda && (
+                  <span>
+                    MESAS QUE YA DECIDIERON{' '}
+                    <strong className="text-text-primary tabular-nums">
+                      {mesasQueDecidieron}/{state.teams.length}
+                    </strong>
+                  </span>
+                )}
+                <span>
+                  DECISIONES{' '}
+                  <strong className="text-text-primary">
+                    <AnimatedNumber value={decisionesTotales} />
+                  </strong>
+                </span>
+                <span>
+                  EFICIENCIA MEDIA{' '}
+                  <strong className="text-accent-eficiencia">
+                    {eficienciaMedia === null ? (
+                      '—'
+                    ) : (
+                      <AnimatedNumber value={eficienciaMedia} format={(v) => `${formatNumber(v, 1)}%`} />
+                    )}
+                  </strong>
+                </span>
               </div>
+
+              {prefijoRonda && state.teams.length > 0 && (
+                <div className="w-full h-1.5 rounded-full bg-surface-container-highest overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-accent-eficiencia transition-[width] duration-700 ease-out"
+                    style={{ width: `${(mesasQueDecidieron / state.teams.length) * 100}%` }}
+                  />
+                </div>
+              )}
             </div>
 
             {/* Equipo que llega con la partida empezada: el Host lo añade a mano. */}
@@ -709,6 +940,16 @@ function HostConsole() {
               </div>
             )}
 
+            {/* Instrumentos: carga de la red y lo que va pasando en el aula */}
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,340px)_minmax(0,1fr)] gap-4 items-stretch">
+              <GridMeter
+                cargaPct={cargaLineaPct}
+                isCrisis={hostPhase === 'crisis'}
+                className="h-[196px]"
+              />
+              <DecisionFeed eventos={feed} className="h-[196px]" />
+            </div>
+
             <NeighborhoodStage
               teams={state.teams}
               isCrisis={hostPhase === 'crisis'}
@@ -734,6 +975,7 @@ function HostConsole() {
                     rank={index + 1}
                     variant={hostPhase === 'crisis' ? 'crisis' : 'default'}
                     isLeader={team.id === leaderId}
+                    trend={trends.get(team.id) ?? 'flat'}
                   />
                 </button>
               ))}
@@ -755,7 +997,8 @@ function HostConsole() {
 
         {/* RESULTADOS */}
         {hostPhase === 'resultados' && state && (
-          <div className="flex flex-col gap-8 w-full">
+          <div className="relative flex flex-col gap-8 w-full">
+            <PodiumBurst active className="rounded-2xl" />
             <div className="flex items-center justify-between pb-2 border-b border-border-subtle">
               <div className="flex items-center gap-3">
                 <span className="material-symbols-outlined text-[32px] text-accent-eficiencia">
@@ -777,14 +1020,15 @@ function HostConsole() {
 
             {state.results && (
               <>
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-space-md items-end">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-space-md items-end anim-stagger">
                   {[1, 0, 2].map((position, column) => {
                     const entry = state.results!.ranking[position];
                     if (!entry) return <div key={`vacio-${position}`} className="lg:col-span-4" />;
                     return (
                       <div
                         key={entry.team.id}
-                        className={`lg:col-span-4 ${column === 1 ? 'order-1 lg:order-2 lg:-translate-y-4' : column === 0 ? 'order-2 lg:order-1' : 'order-3'}`}
+                        className={`lg:col-span-4 anim-reveal ${column === 1 ? 'order-1 lg:order-2 lg:-translate-y-4' : column === 0 ? 'order-2 lg:order-1' : 'order-3'}`}
+                        style={{ animationDelay: `${column * 220}ms` }}
                       >
                         <TeamCard
                           team={entry.team}
@@ -792,9 +1036,10 @@ function HostConsole() {
                           variant="podium"
                           isLeader={entry.rank === 1}
                         />
-                        <p className="mt-2 font-label-sm text-label-sm text-text-secondary text-center">
-                          {entry.team.electricidad.toFixed(2)} kWh · {entry.team.gas.toFixed(2)} m³ ·{' '}
-                          ${entry.team.presupuesto.toLocaleString('es-CO')} · {entry.team.eficiencia}%
+                        <p className="mt-2 font-label-sm text-label-sm text-text-secondary text-center tabular-nums">
+                          {formatNumber(entry.team.electricidad, 2)} kWh ·{' '}
+                          {formatNumber(entry.team.gas, 2)} m³ · ${' '}
+                          {formatNumber(entry.team.presupuesto, 0)} · {entry.team.eficiencia}%
                         </p>
                       </div>
                     );
@@ -829,13 +1074,13 @@ function HostConsole() {
                           <span>
                             ELECTRICIDAD{' '}
                             <strong className="text-text-primary tabular-nums">
-                              {entry.team.electricidad.toFixed(2)} kWh
+                              {formatNumber(entry.team.electricidad, 2)} kWh
                             </strong>
                           </span>
                           <span>
                             GAS{' '}
                             <strong className="text-text-primary tabular-nums">
-                              {entry.team.gas.toFixed(2)} m³
+                              {formatNumber(entry.team.gas, 2)} m³
                             </strong>
                           </span>
                           <span>
@@ -938,9 +1183,9 @@ function HostConsole() {
       <footer className="w-full bg-bg-surface border-t border-border-subtle mt-auto">
         <div className="w-full h-12 px-margin-desktop flex items-center justify-between font-label-sm text-label-sm text-text-secondary uppercase tracking-wider">
           <div className="flex items-center gap-space-md">
-            <span>TELEMETRÍA DE RED</span>
+            <span>{state ? `SALA ${salaCode(state.gameId)}` : 'SIN SALA'}</span>
             <span className="text-border-subtle">/</span>
-            <span>FUENTE: WORKER (ÚNICA FUENTE DE VERDAD)</span>
+            <span>4 RONDAS · LA RED ES DE TODOS</span>
           </div>
           <div className="flex items-center gap-space-sm">
             <span

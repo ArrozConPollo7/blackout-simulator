@@ -11,6 +11,8 @@ Sistema de diseño de referencia para las vistas Host y Player. Esto es lo que a
 - **Cero datos inventados.** Cada número en pantalla corresponde a una variable real del motor de juego (ver `documento-proyecto-energia-en-crisis.md`, sección 5). Nada de IDs de sesión, latencias, voltajes ni "operadores" decorativos. **Excepción explícita: el QR del lobby** (Fase 3), que no es adorno sino el canal de entrada de las mesas: codifica `/join?game=…`, y sin él nadie puede registrarse. Un elemento gráfico solo se permite si hace trabajo real.
 - **Densidad controlada.** Máximo 3 bloques de información primaria visibles a la vez por pantalla.
 - **Consistencia entre estados.** Lobby, En Juego, Crisis y Resultados comparten header, tipografía y componentes de tarjeta — son la misma app, no pantallas de sistemas distintos.
+- **La pantalla no habla de tecnología.** El aula ve un centro de control, no una consola de desarrollo: prohibido «Worker», «Supabase», «API», «token», nombres de variables o rutas. Los avisos de configuración incompleta existen solo en desarrollo. Si algo no puede explicarse en el idioma del juego, no se muestra.
+- **Es un juego, no un panel.** La energía y la tensión son parte del diseño: contadores vivos, avisos de urgencia, celebración de los cambios de puesto y un cierre de podio. Lo que se anima siempre informa (cuánto queda, quién acaba de decidir, quién subió).
 
 ---
 
@@ -139,6 +141,26 @@ Esa imagen es referencia de dirección de arte, no algo replicable literalmente 
 - **`prefers-reduced-motion: reduce`** desactiva las animaciones decorativas en las dos vistas.
 - El feedback de una decisión aparece **después** de la respuesta del Worker (nunca antes),
   con un destello verde y deslizamiento: la interfaz no anticipa el resultado del motor.
+
+### Teatro de sincronización (lo que hace que se sienta en vivo)
+
+Patrones tomados de los juegos de aula en vivo (Kahoot, HQ Trivia, Jackbox) y aplicados aquí:
+
+- **Un solo reloj en todas las pantallas.** El tiempo sale de la marca del servidor y se dibuja como
+  barra/aro que se agota (verde → ámbar → rojo) en el proyector y en el celular. Nadie cuenta
+  segundos por su cuenta.
+- **Contador vivo.** «Mesas dentro», «mesas que ya decidieron», decisiones registradas y consumo del
+  aula se mueven en la pantalla grande: el aula ve que está pasando algo aunque nadie hable.
+- **Bloqueo y revelación.** En el móvil, la elección se marca al instante y el resto de opciones se
+  atenúan; el veredicto (y sus números) llega después del servidor. Nunca se adelanta el resultado.
+- **Trayectoria, no solo posición.** «Subió 2 puestos» motiva en cualquier puesto; por eso el
+  proyector celebra los cambios de ranking con el delta real, y el podio marca el aro del líder.
+- **Ritmo del operador.** La ronda se abre con una toma de pantalla que nombra lo que viene; el
+  cronómetro lo abre el anfitrión cuando el grupo está listo.
+- **Nunca se calla una espera.** Si algo tarda, la interfaz lo dice («Montando la sala…»,
+  «Enviando…», «Revalidando credencial…»). La latencia sin explicación se lee como avería.
+- **El puesto siempre en texto.** Ninguna posición se comunica solo con color o movimiento: hay
+  número, palabra y etiqueta (accesibilidad y proyector descalibrado).
 
 ### Lenguaje de sonido
 
