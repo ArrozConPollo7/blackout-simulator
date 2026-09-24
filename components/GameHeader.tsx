@@ -55,24 +55,24 @@ export default function GameHeader({
                 isCrisis ? 'bg-accent-crisis animate-ping' : 'bg-accent-eficiencia animate-pulse'
               }`}
             ></div>
-            <span className="font-headline-md text-headline-md tracking-wider text-text-primary uppercase font-bold">
+            <span className="font-headline-md text-headline-md tracking-wider text-text-primary uppercase font-bold whitespace-nowrap">
               Energía en Crisis
             </span>
           </div>
 
-          <div className="h-6 w-px bg-border-subtle hidden sm:block"></div>
+          <div className="h-6 w-px bg-border-subtle hidden xl:block"></div>
 
-          <div className="hidden lg:flex items-center gap-space-xs">
-            <span className="font-label-sm text-label-sm text-text-secondary uppercase tracking-widest">
+          <div className="hidden xl:flex items-center gap-space-xs">
+            <span className="font-label-sm text-label-sm text-text-secondary uppercase tracking-widest whitespace-nowrap">
               FASE ACTUAL
             </span>
-            <div className="px-2 py-0.5 rounded bg-surface border border-border-subtle font-label-md text-label-md text-accent-presupuesto tracking-wide">
+            <div className="px-2 py-0.5 rounded bg-surface border border-border-subtle font-label-md text-label-md text-accent-presupuesto tracking-wide whitespace-nowrap">
               {phaseName}
             </div>
           </div>
 
           <div
-            className={`px-2.5 py-1 rounded bg-surface border font-label-md text-label-md font-semibold tracking-wider uppercase ${
+            className={`px-2.5 py-1 rounded bg-surface border font-label-md text-label-md font-semibold tracking-wider uppercase whitespace-nowrap ${
               isCrisis
                 ? 'border-accent-crisis text-accent-crisis bg-accent-crisis/10 animate-pulse'
                 : 'border-accent-presupuesto/40 text-accent-presupuesto'
@@ -148,7 +148,7 @@ export default function GameHeader({
                 className="h-10 px-3.5 rounded-lg bg-surface-container-high text-text-primary font-label-md text-label-md font-bold uppercase tracking-wider transition-colors hover:bg-surface-bright active:scale-95 flex items-center gap-2 shadow-sm border border-border-subtle disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 <span className="material-symbols-outlined text-[18px]">skip_next</span>
-                <span>{nextPhaseLabel}</span>
+                <span className="whitespace-nowrap">{nextPhaseLabel}</span>
               </button>
             )}
           </div>

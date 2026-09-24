@@ -395,7 +395,7 @@ export default function NeighborhoodStage({
         <Canvas
           dpr={[1, 1.5]}
           gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
-          camera={{ position: [0, 6.4, 13.5], fov: 42, near: 0.1, far: 90 }}
+          camera={{ position: [0, 4.8, 11.2], fov: 38, near: 0.1, far: 90 }}
         >
           <CrisisAmbience isCrisis={isCrisis}>
             <directionalLight position={[-6, 9, 6]} intensity={0.65} color="#b9c6dd" />

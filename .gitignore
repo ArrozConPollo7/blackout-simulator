@@ -42,3 +42,4 @@ repomap.md
 # cloudflare worker local vars
 .dev.vars
 worker/.dev.vars
+.env*
