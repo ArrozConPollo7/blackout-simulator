@@ -58,6 +58,8 @@ function HostConsole() {
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   /** null = la consola aún no está desbloqueada (pide la contraseña de anfitrión). */
   const [passcode, setPasscode] = useState<string | null>(null);
+  /** true mientras se revalida la contraseña recordada de esta pestaña. */
+  const [revisando, setRevisando] = useState(true);
   const [slots, setSlots] = useState<number | null>(null);
   const [nuevoEquipo, setNuevoEquipo] = useState('');
   /** URL absoluta del registro de mesas: es lo que codifica el QR del proyector. */
@@ -68,13 +70,33 @@ function HostConsole() {
   const phase = state?.phase;
 
   // El proyector recuerda la contraseña solo durante esta pestaña (lib/host-auth.ts).
+  // Se revalida al abrir: si el anfitrión la cambió en el Worker, la consola no arranca
+  // con una credencial muerta (el síntoma era "todo falla" sin decir por qué).
   useEffect(() => {
     const guardada = readHostPass();
-    if (guardada) {
-      setRuntimeHostToken(guardada);
-      setPasscode(guardada);
-    }
     setSlots(readActiveGame()?.slots ?? null);
+    if (!guardada) {
+      setRevisando(false);
+      return;
+    }
+    let vigente = true;
+    setRuntimeHostToken(guardada);
+    api
+      .verifyHost(guardada)
+      .then(() => {
+        if (!vigente) return;
+        setPasscode(guardada);
+        setRevisando(false);
+      })
+      .catch(() => {
+        if (!vigente) return;
+        clearHostPass();
+        setRuntimeHostToken(null);
+        setRevisando(false);
+      });
+    return () => {
+      vigente = false;
+    };
   }, []);
 
   const desbloquear = useCallback((valor: string) => {
@@ -284,6 +306,13 @@ function HostConsole() {
 
   // Sin contraseña no hay consola: el proyector es público, los controles no.
   if (!passcode) {
+    if (revisando) {
+      return (
+        <main className="min-h-screen bg-bg-primary text-text-primary flex items-center justify-center font-label-md text-label-md uppercase tracking-wider">
+          Revalidando credencial del proyector…
+        </main>
+      );
+    }
     return <HostGate onUnlock={desbloquear} />;
   }
 
