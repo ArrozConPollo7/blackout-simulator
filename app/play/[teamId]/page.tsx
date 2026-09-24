@@ -346,7 +346,7 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
                 <span className="font-label-md text-label-md uppercase tracking-wider text-text-primary font-bold truncate">
                   {team?.name ?? 'Equipo'}
                 </span>
-                <span className="font-body-sm text-body-sm text-text-secondary truncate">
+                <span className="font-body-sm text-body-sm text-text-secondary truncate hidden min-[400px]:inline">
                   · {caso?.name ?? 'sin caso'}
                 </span>
               </div>
@@ -379,9 +379,9 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
                 icono="local_fire_department"
                 etiqueta="Gas"
                 color="text-accent-gas"
-                valor={team ? `${formatNumber(team.gas, 1)} m³` : '—'}
+                valor={team ? `${formatNumber(team.gas, team.gas >= 100 ? 0 : 1)} m³` : '—'}
                 numero={team?.gas}
-                formato={(valor) => `${formatNumber(valor, 1)} m³`}
+                formato={(valor) => `${formatNumber(valor, valor >= 100 ? 0 : 1)} m³`}
               />
               <Badge
                 icono="account_balance_wallet"
@@ -412,7 +412,7 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
         <main className="w-full pt-28 px-4 flex-1 flex flex-col gap-4">
           {missingConfig.length > 0 && (
             <p className="rounded-lg border border-accent-gas/40 bg-accent-gas/10 px-3 py-2 font-label-sm text-label-sm">
-              El centro de control no está enlazado con esta partida. Avisa al Host.
+              Sin enlace directo con la sala: los marcadores se actualizan cada pocos segundos.
             </p>
           )}
           {error && (
@@ -662,25 +662,27 @@ function Badge({
   }, [numero]);
 
   return (
-    <div className="flex items-center gap-1 px-1.5 py-1 rounded bg-bg-primary/80 border border-border-subtle">
-      <span
-        key={golpe}
-        className={`material-symbols-outlined ${color} text-[14px] ${golpe > 0 ? 'anim-icon-kick' : ''}`}
-      >
-        {icono}
-      </span>
-      <div className="flex flex-col min-w-0">
-        <span className="font-label-sm text-[9px] text-text-secondary uppercase leading-none">
+    <div className="flex flex-col gap-0.5 px-1.5 py-1 rounded bg-bg-primary/80 border border-border-subtle min-w-0">
+      {/* Icono y rótulo comparten renglón para que el número use todo el ancho: en un
+          celular de 360 px el icono al lado dejaba 36 px al valor y cortaba «100 kWh». */}
+      <span className="flex items-center gap-1 min-w-0">
+        <span
+          key={golpe}
+          className={`material-symbols-outlined ${color} text-[12px] ${golpe > 0 ? 'anim-icon-kick' : ''}`}
+        >
+          {icono}
+        </span>
+        <span className="font-label-sm text-[9px] text-text-secondary uppercase leading-none truncate">
           {etiqueta}
         </span>
-        <span className="font-label-sm text-[11px] text-text-primary truncate font-bold leading-tight tabular-nums">
-          {numero !== undefined && formato ? (
-            <AnimatedNumber value={numero} format={formato} duration={duration} />
-          ) : (
-            valor
-          )}
-        </span>
-      </div>
+      </span>
+      <span className="font-label-sm text-[12px] text-text-primary font-bold leading-tight tabular-nums whitespace-nowrap">
+        {numero !== undefined && formato ? (
+          <AnimatedNumber value={numero} format={formato} duration={duration} />
+        ) : (
+          valor
+        )}
+      </span>
     </div>
   );
 }
@@ -783,7 +785,7 @@ function FichaAparato({
               label={option.label}
               consumo={CONSUMO_LABEL[impactHint(option.effect).consumo]}
               ahorra={impactHint(option.effect).consumo !== 'igual'}
-              confort={CONFORT_LABEL[impactHint(option.effect).confort]}
+              confort={option.effect.eficiencia ? CONFORT_LABEL[impactHint(option.effect).confort] : undefined}
               index={i}
               state={
                 pending === option.id
@@ -920,7 +922,7 @@ function ListaEscenarios({
               label={option.label}
               consumo={CONSUMO_LABEL[impactHint(option.effect).consumo]}
               ahorra={impactHint(option.effect).consumo !== 'igual'}
-              confort={CONFORT_LABEL[impactHint(option.effect).confort]}
+              confort={option.effect.eficiencia ? CONFORT_LABEL[impactHint(option.effect).confort] : undefined}
               index={i}
               state={
                 pending === option.id

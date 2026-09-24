@@ -8,6 +8,8 @@
  *
  *   npm run dev:api            # http://127.0.0.1:8787
  *   PORT=9000 npm run dev:api
+ *   LENTO_MS=8000 npm run dev:api   # retrasa cada respuesta (ensayo de red mala: el Wi-Fi
+ *                                   # del aula con 30 equipos tarda varios segundos)
  *
  * Para la versión real (persistencia + Realtime) usa `wrangler dev` con
  * SUPABASE_SERVICE_ROLE_KEY configurada en worker/.dev.vars.
@@ -30,6 +32,9 @@ const env: Env = {
 
 const repo = new InMemoryRepo();
 let peticiones = 0;
+/** Retardo artificial por respuesta (ms). Sirve para ensayar la interfaz con la red del aula. */
+const lentoMs = Number(process.env.LENTO_MS ?? 0);
+const esperar = (ms: number) => new Promise((listo) => setTimeout(listo, ms));
 
 const server = createServer(async (req, res) => {
   const chunks: Buffer[] = [];
@@ -48,6 +53,7 @@ const server = createServer(async (req, res) => {
     console.log(`${peticiones}  ${req.method} ${req.url}  ->  ${response.status}`);
   }
 
+  if (lentoMs > 0) await esperar(lentoMs);
   res.writeHead(response.status, Object.fromEntries(response.headers));
   res.end(Buffer.from(await response.arrayBuffer()));
 });
@@ -56,5 +62,6 @@ server.listen(port, () => {
   console.log(`API local (repositorio en memoria) en http://127.0.0.1:${port}`);
   console.log(`HOST_TOKEN=${hostToken} (debe coincidir con NEXT_PUBLIC_HOST_TOKEN)`);
   console.log('La consola /host tambien acepta la contraseña de anfitrión: 9806');
+  if (lentoMs > 0) console.log(`Retardo artificial: ${lentoMs} ms por respuesta (LENTO_MS)`);
   console.log('GET /health para comprobar que responde.');
 });

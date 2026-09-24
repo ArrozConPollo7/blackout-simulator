@@ -32,7 +32,9 @@ interface ChoiceButtonProps {
   consumo: string;
   /** El consumo baja: se pinta en verde. */
   ahorra: boolean;
-  confort: string;
+  /** Impacto en el confort. Solo se pasa cuando la ronda lo puntúa (Ronda 2): si no, la
+   *  etiqueta sería idéntica en las tres opciones y no informaría de nada. */
+  confort?: string;
   state: ChoiceState;
   /** Posición en la lista: afina el tono del clic (teclado, no melodía). */
   index: number;
@@ -177,7 +179,7 @@ function ChoiceButton({
           Consumo:{' '}
           <strong className={ahorra ? 'text-accent-eficiencia' : 'text-text-primary'}>{consumo}</strong>
         </span>
-        <span>{confort}</span>
+        {confort ? <span>{confort}</span> : null}
       </span>
     </button>
   );

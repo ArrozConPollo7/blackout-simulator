@@ -38,7 +38,15 @@ export interface GameConnection {
 
 const REALTIME_DEBOUNCE_MS = 120;
 /** Ritmo del sondeo de respaldo: más rápido cuando Realtime no está suscrito. */
-const POLL_MS = { suscrito: 8000, respaldo: 4000 } as const;
+const POLL_MS = { suscrito: 5000, respaldo: 3000 } as const;
+/**
+ * Tope de una petición de estado. Generoso a propósito: en el aula el Wi-Fi se satura con
+ * 30 equipos y una petición puede tardar 10 s o más. Un tope corto condenaría al celular a
+ * no recibir nunca el estado (mejor lento que congelado).
+ */
+const REQUEST_TIMEOUT_MS = 20000;
+/** Dos recargas forzadas más seguidas que esto no se pisan: la de en medio sigue viva. */
+const FORZADO_MIN_MS = 1200;
 
 export function useGameState(gameId: string | null): GameConnection {
   const [state, setState] = useState<GameStateResponse | null>(null);
@@ -50,32 +58,65 @@ export function useGameState(gameId: string | null): GameConnection {
 
   const gameIdRef = useRef(gameId);
   gameIdRef.current = gameId;
-  const inFlight = useRef<AbortController | null>(null);
+  /** Intentos vivos ahora mismo (puede haber 2 si uno se pasó del tope y llegó otro). */
+  const vivos = useRef(0);
+  const ultimoIntento = useRef(0);
+  /** Sello del último estado aplicado: una respuesta que llegue tarde no puede regresar la UI. */
+  const ultimoSello = useRef(0);
+  const stateRef = useRef<GameStateResponse | null>(null);
+  stateRef.current = state;
 
-  const reload = useCallback(async () => {
+  /**
+   * Pide el estado completo al Worker.
+   *
+   * Reglas que evitan el congelamiento en el aula (30 equipos en el Wi-Fi):
+   *  1. **Nunca se aborta una lectura en vuelo.** Antes cada tick abortaba la anterior: con
+   *     una red más lenta que el intervalo no terminaba NINGUNA y el celular se quedaba en
+   *     la fase vieja para siempre (medido: 7 lanzadas, 6 abortadas, 1 completada, sin
+   *     actualizarse en 60 s). Ahora el sondeo se salta el turno.
+   *  2. **El tope de tiempo no mata la petición, solo permite otro intento.** Si una lectura
+   *     tarda más que `REQUEST_TIMEOUT_MS` (red saturada), se deja vivir —cuando llegue se
+   *     aplica— y el siguiente tick puede lanzar una nueva en paralelo.
+   *  3. **Respuestas tardías se descartan por sello**: solo se aplica lo que sea más nuevo que
+   *     el último estado aplicado, y solo si es de esta partida.
+   */
+  const pedir = useCallback(async (opts: { forzar?: boolean } = {}) => {
     const current = gameIdRef.current;
     if (!current) {
       setStatus('sin-partida');
       setState(null);
       return;
     }
-    inFlight.current?.abort();
-    const controller = new AbortController();
-    inFlight.current = controller;
+    const hayIntentoReciente = vivos.current > 0 && Date.now() - ultimoIntento.current < REQUEST_TIMEOUT_MS;
+    if (hayIntentoReciente && !opts.forzar) return;
+    if (hayIntentoReciente && opts.forzar && Date.now() - ultimoIntento.current < FORZADO_MIN_MS) return;
+
+    vivos.current += 1;
+    ultimoIntento.current = Date.now();
     try {
-      const next = await api.getState(current, controller.signal);
+      const next = await api.getState(current, undefined);
+      if (next.gameId !== gameIdRef.current) return;
+      const sello = Date.parse(next.serverTime);
+      if (Number.isFinite(sello) && sello < ultimoSello.current) return;
+      if (Number.isFinite(sello)) ultimoSello.current = sello;
       setState(next);
       setStatus('listo');
       setError(null);
       setLastSyncAt(Date.now());
-      const serverTime = Date.parse(next.serverTime);
-      if (Number.isFinite(serverTime)) setClockSkewMs(serverTime - Date.now());
+      if (Number.isFinite(sello)) setClockSkewMs(sello - Date.now());
     } catch (cause) {
-      if (controller.signal.aborted) return;
+      // Sin respuesta: se conserva el último estado bueno (el chip de la cabecera avisa de
+      // que está viejo) y solo se muestra el error si nunca hubo estado.
+      if (stateRef.current) return;
       setStatus('error');
       setError(describeApiError(cause));
+    } finally {
+      vivos.current -= 1;
     }
   }, []);
+
+  /** Recarga explícita (botón, volver a la app, evento de Realtime). */
+  const reload = useCallback(() => pedir({ forzar: true }), [pedir]);
 
   // Carga inicial y recarga al cambiar de partida.
   useEffect(() => {
@@ -85,8 +126,8 @@ export function useGameState(gameId: string | null): GameConnection {
       return;
     }
     setStatus('cargando');
-    void reload();
-  }, [gameId, reload]);
+    void pedir();
+  }, [gameId, pedir]);
 
   // Suscripción a Realtime: cualquier cambio en games/teams de esta partida dispara un
   // refetch completo. Al (re)suscribirse también se refresca, lo que cubre la reconexión.
@@ -102,7 +143,7 @@ export function useGameState(gameId: string | null): GameConnection {
     let debounce: ReturnType<typeof setTimeout> | null = null;
     const scheduleReload = () => {
       if (debounce) clearTimeout(debounce);
-      debounce = setTimeout(() => void reload(), REALTIME_DEBOUNCE_MS);
+      debounce = setTimeout(() => void pedir({ forzar: true }), REALTIME_DEBOUNCE_MS);
     };
 
     const channel = supabase
@@ -120,7 +161,7 @@ export function useGameState(gameId: string | null): GameConnection {
       .subscribe((channelStatus) => {
         if (channelStatus === 'SUBSCRIBED') {
           setRealtime('suscrito');
-          void reload();
+          void pedir({ forzar: true });
         } else if (channelStatus === 'CHANNEL_ERROR' || channelStatus === 'TIMED_OUT') {
           setRealtime('error');
         } else if (channelStatus === 'CLOSED') {
@@ -132,7 +173,7 @@ export function useGameState(gameId: string | null): GameConnection {
       if (debounce) clearTimeout(debounce);
       void supabase.removeChannel(channel);
     };
-  }, [gameId, reload]);
+  }, [gameId, pedir]);
 
   // Respaldo: el sondeo va SIEMPRE, más espaciado cuando Realtime ya avisa. Un aula con 30
   // dispositivos no nota una petición cada 8 s, y evita que una suscripción al proyecto
@@ -140,9 +181,9 @@ export function useGameState(gameId: string | null): GameConnection {
   useEffect(() => {
     if (!gameId) return;
     const periodo = realtime === 'suscrito' ? POLL_MS.suscrito : POLL_MS.respaldo;
-    const timer = setInterval(() => void reload(), periodo);
+    const timer = setInterval(() => void pedir(), periodo);
     return () => clearInterval(timer);
-  }, [gameId, realtime, reload]);
+  }, [gameId, realtime, pedir]);
 
   // Refresco al volver a la pestaña (el celular estuvo en segundo plano).
   useEffect(() => {
@@ -150,7 +191,14 @@ export function useGameState(gameId: string | null): GameConnection {
       if (document.visibilityState === 'visible') void reload();
     };
     document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
+    // Recuperar la conexión también cuenta como volver: en el aula el Wi-Fi se cae y vuelve.
+    window.addEventListener('online', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
   }, [reload]);
 
   const applyState = useCallback((next: GameStateResponse) => {
