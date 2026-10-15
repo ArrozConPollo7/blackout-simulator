@@ -24,12 +24,13 @@ import PhaseBanner from '@/components/play/PhaseBanner';
 import RoundProgress from '@/components/play/RoundProgress';
 import SoundToggle from '@/components/SoundToggle';
 import { hapticConfirm, hapticDeny, hapticTap } from '@/components/play/haptics';
-import { drawnScenariosForCase } from '@/engine/draw';
 import {
   APPLIANCE_BY_ID,
   ROUND2B_SCENARIOS,
+  SCENARIOS_BY_ID,
+  scenariosForCase,
 } from '@/content/decisions';
-import { PRESUPUESTO_INICIAL } from '@/content/economy';
+import { CRISIS_SURCHARGE_RATE, PRESUPUESTO_INICIAL } from '@/content/economy';
 import type { ApplianceProfile, DecisionScenario } from '@/content/decisions';
 import type { TeamResult } from '@/engine/results';
 import type { DecisionEffect, TeamState } from '@/types/game';
@@ -85,12 +86,25 @@ function rondaCompleta(
   const escenarios =
     round === 'decidir_2'
       ? ROUND2B_SCENARIOS.map((s) => s.id)
-      : state.assignedScenarios[teamId] ?? [];
+      : situacionesDeLaMesa(state, teamId);
   if (escenarios.length === 0) return false;
   const contestadas = state.answered[teamId] ?? [];
   return escenarios.every((id) =>
     contestadas.includes(round === 'decidir_2' ? 'r2b' : `r2:${id}`),
   );
+}
+
+/**
+ * Situaciones de Ronda 2 de esta mesa.
+ *
+ * Salen del sorteo del Worker (`assignedScenarios`). Si el Worker todavía no conoce el sorteo
+ * (ventana de despliegue), se cae al filtro local de siempre: la partida se juega igual, solo
+ * que con el catálogo completo, en vez de quedarse en blanco.
+ */
+function situacionesDeLaMesa(state: GameStateResponse, teamId: string): string[] {
+  const sorteadas = state.assignedScenarios?.[teamId];
+  if (sorteadas && sorteadas.length > 0) return sorteadas;
+  return scenariosForCase('decidir', state.cases[teamId]?.appliances ?? null).map((s) => s.id);
 }
 
 /** Rechazo del motor en lenguaje de juego: nunca se muestra texto técnico al jugador. */
@@ -143,6 +157,8 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
   const team = state?.teams.find((t) => t.id === teamId) ?? null;
   const caso = state?.cases[teamId] ?? null;
   const answered = state?.answered[teamId] ?? [];
+  /** Situaciones de Ronda 2 de esta mesa (del sorteo del Worker o del filtro local). */
+  const sorteadas = state ? situacionesDeLaMesa(state, teamId) : [];
   const phase = state?.phase;
 
   const playEvent = useAudioEvent();
@@ -287,7 +303,7 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
     }
     if (phase === 'decidir') {
       // Solo las situaciones sorteadas a esta mesa (plan 1.1): el progreso cuenta las suyas.
-      const mias = state.assignedScenarios[teamId] ?? [];
+      const mias = situacionesDeLaMesa(state, teamId);
       if (mias.length === 0) return null;
       return {
         etiqueta: 'Situaciones resueltas',
@@ -315,11 +331,18 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
 
   // Las situaciones de esta mesa salen del SORTEO de la partida (state.assignedScenarios),
   // no de un filtro local: el Worker rechaza cualquier otra cosa y la pantalla muestra lo mismo.
-  const escenariosRonda2 =
+  // En `decidir` se muestran EXACTAMENTE las situaciones que el Worker sorteó (en su orden);
+  // si el Worker todavía no manda el sorteo, se cae al catálogo filtrado por aparatos.
+  const escenariosRonda2: DecisionScenario[] =
     phase === 'decidir_2'
       ? ROUND2B_SCENARIOS
-      : drawnScenariosForCase(state?.seed ?? 0, caso?.caseId ?? '');
-  const miVoto = state?.crisisVotes.find((v) => v.teamId === teamId)?.measureId ?? null;
+      : sorteadas.length > 0
+        ? sorteadas
+            .map((id) => SCENARIOS_BY_ID[id])
+            .filter((s): s is DecisionScenario => Boolean(s))
+        : scenariosForCase('decidir', caso?.appliances ?? null);
+  const votosCrisis = state?.crisisVotes ?? [];
+  const miVoto = votosCrisis.find((v) => v.teamId === teamId)?.measureId ?? null;
   const rondaActual: Ronda | null =
     phase === 'investigar' ? 'investigar' : phase === 'decidir' ? 'decidir' : phase === 'decidir_2' ? 'decidir_2' : null;
 
@@ -585,7 +608,7 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
               />
 
               {/* Eventos aleatorios de la ronda (plan 2.2 y 4.2): el texto llega del Worker. */}
-              {state?.activeEvents.map((evento) => (
+              {(state?.activeEvents ?? []).map((evento) => (
                 <EventAlert
                   key={`${evento.id}:${evento.applianceId ?? 'aula'}`}
                   title={evento.title}
@@ -613,13 +636,13 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
           )}
 
           {/* VOTACIÓN DEL AULA (plan 3) */}
-          {phase === 'crisis_votacion' && state && (
+          {phase === 'crisis_votacion' && state && (state.crisisMeasures?.length ?? 0) > 0 && (
             <CrisisVoteCard
               medidas={state.crisisMeasures}
               miVoto={miVoto}
               equipos={state.teams.length}
-              votos={state.crisisVotes.length}
-              resultado={state.crisisOutcome}
+              votos={votosCrisis.length}
+              resultado={state.crisisOutcome ?? null}
               onVote={onVote}
             />
           )}
@@ -641,13 +664,14 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
                     />
                   </div>
                   <h1 className="font-headline-md text-headline-md text-text-primary uppercase font-bold tracking-tight anim-flicker">
-                    La luz subió {Math.round(state.crisisRate * 100)}% para todos
+                    La luz subió {Math.round((state.crisisRate ?? CRISIS_SURCHARGE_RATE) * 100)}% para todos
                   </h1>
                   <p className="font-body-sm text-body-sm text-text-secondary">
                     El recargo ya se aplicó sobre tu consumo acumulado: pagas{' '}
-                    {Math.round(state.crisisRate * 100)}% más por cada kWh que llevas consumido.{' '}
-                    {state.crisisVariant.gasSurchargeRate > 0
-                      ? `El gas también subió ${Math.round(state.crisisVariant.gasSurchargeRate * 100)}%. `
+                    {Math.round((state.crisisRate ?? CRISIS_SURCHARGE_RATE) * 100)}% más por cada kWh
+                    que llevas consumido.{' '}
+                    {(state.crisisVariant?.gasSurchargeRate ?? 0) > 0
+                      ? `El gas también subió ${Math.round((state.crisisVariant?.gasSurchargeRate ?? 0) * 100)}%. `
                       : ''}
                     Ahora el aula vota una medida de emergencia.
                   </p>

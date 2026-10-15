@@ -25,11 +25,11 @@ import DecisionFeed from '@/components/host/DecisionFeed';
 import CrisisVotePanel from '@/components/host/CrisisVotePanel';
 import PodiumBurst from '@/components/host/PodiumBurst';
 import { audio, useAudioEvent, useSoundEnabled } from '@/lib/audio';
-import { CONSUMO_REFERENCIA_ELECTRICIDAD, PRESUPUESTO_INICIAL } from '@/content/economy';
+import { CONSUMO_REFERENCIA_ELECTRICIDAD, CRISIS_SURCHARGE_RATE, PRESUPUESTO_INICIAL } from '@/content/economy';
 import { CASE_CATALOG } from '@/content/cases';
 import { scenariosForCase } from '@/content/decisions';
 import { compareTeams } from '@/engine/results';
-import { api, describeApiError, setRuntimeHostToken } from '@/lib/api';
+import { ApiClientError, api, describeApiError, setRuntimeHostToken } from '@/lib/api';
 import { isDevelopment, missingConfig } from '@/lib/env';
 import { clearHostPass, readHostPass, writeHostPass } from '@/lib/host-auth';
 import { readActiveGame, resolveGameId, writeActiveGame } from '@/lib/game-store';
@@ -44,7 +44,7 @@ import {
   siguienteEtiqueta,
   type PhaseStep,
 } from '@/lib/ui';
-import type { RankingTrend } from '@/types/game';
+import type { Phase, RankingTrend } from '@/types/game';
 
 /** Suceso real para la tira de actividad del proyector (nada inventado). */
 interface FeedEvent {
@@ -188,6 +188,35 @@ function HostConsole() {
       }
     },
     [connection],
+  );
+
+  /**
+   * Abre la siguiente fase.
+   *
+   * Red de despliegue (plan 3): si el Worker todavía es el antiguo, no conoce `crisis_votacion`
+   * y responde 409. En vez de dejar el proyector atascado en la crisis, se pide el salto
+   * directo a `decidir_2`, que el Worker nuevo acepta como transición heredada (resolviendo la
+   * votación con los votos que haya).
+   */
+  const abrirFase = useCallback(
+    async (target: Phase) => {
+      if (!state) return;
+      await runHostAction(async () => {
+        try {
+          return await api.setPhase(state.gameId, target);
+        } catch (cause) {
+          if (
+            target === 'crisis_votacion' &&
+            cause instanceof ApiClientError &&
+            (cause.status === 409 || cause.status === 400)
+          ) {
+            return api.setPhase(state.gameId, 'decidir_2');
+          }
+          throw cause;
+        }
+      }, `Fase abierta: ${phaseLabel(target)}`);
+    },
+    [runHostAction, state],
   );
 
   const crearPartida = useCallback(
@@ -492,15 +521,7 @@ function HostConsole() {
                 )
             : undefined
         }
-        onAdvancePhase={
-          step.next
-            ? () =>
-                runHostAction(
-                  () => api.setPhase(state!.gameId, step.next!.phase),
-                  `Fase abierta: ${step.next!.label}`,
-                )
-            : undefined
-        }
+        onAdvancePhase={step.next ? () => void abrirFase(step.next!.phase) : undefined}
       />
 
       {/* Toma de pantalla al abrir una ronda: el salón entero ve el cambio */}
@@ -858,10 +879,10 @@ function HostConsole() {
                 no necesita una segunda capa de alerta encima. */}
             {phase === 'crisis_votacion' && (
               <CrisisVotePanel
-                medidas={state.crisisMeasures}
-                votos={state.crisisVotes}
+                medidas={state.crisisMeasures ?? []}
+                votos={state.crisisVotes ?? []}
                 equipos={state.teams}
-                resultado={state.crisisOutcome}
+                resultado={state.crisisOutcome ?? null}
                 timerEndsAt={state.timerEndsAt}
                 clockSkewMs={connection.clockSkewMs}
                 onReveal={() => setRevealSignal((n) => n + 1)}
@@ -893,7 +914,7 @@ function HostConsole() {
                   : phase === 'decidir'
                     ? 'Cada mesa elige cómo usar sus aparatos.'
                     : phase === 'crisis'
-                      ? `El recargo del ${Math.round(state.crisisRate * 100)}% ya está aplicado sobre el consumo acumulado.`
+                      ? `El recargo del ${Math.round((state.crisisRate ?? CRISIS_SURCHARGE_RATE) * 100)}% ya está aplicado sobre el consumo acumulado.`
                       : phase === 'crisis_votacion'
                         ? 'El aula vota la medida de emergencia: se aplica a todas las casas.'
                         : phase === 'decidir_2'

@@ -412,3 +412,32 @@ describe('Worker — ventana de votación', () => {
     }
   });
 });
+
+describe('Worker — ventana de despliegue con la app antigua', () => {
+  it('acepta el salto heredado crisis -> decidir_2 y resuelve la votación con los votos que haya', async () => {
+    const h = await harness();
+    const started = await h.start(4);
+    await h.post(`/game/${started.gameId}/phase`, { phase: 'investigar' }, host());
+    await h.post(`/game/${started.gameId}/phase`, { phase: 'decidir' }, host());
+    await h.post(`/game/${started.gameId}/phase`, { phase: 'crisis' }, host());
+
+    // La app antigua no conoce `crisis_votacion`: pide el salto directo.
+    const res = await h.post(`/game/${started.gameId}/phase`, { phase: 'decidir_2' }, host());
+    assert.equal(res.status, 200);
+    const state = await stateOf(res);
+    assert.equal(state.phase, 'decidir_2');
+    assert.ok(state.crisisOutcome, 'sin votos decide la medida más severa de la papeleta');
+    const severa = [...state.crisisMeasures].sort((a, b) => b.severity - a.severity)[0];
+    assert.equal(state.crisisOutcome!.measureId, severa.id);
+    assert.equal(state.crisisOutcome!.totalVotes, 0);
+
+    // La medida se aplicó y quedó registrada una sola vez por equipo.
+    const medidas = h.repo.allDecisions().filter((d) => d.choice.startsWith('crisis:medida:'));
+    assert.equal(medidas.length, started.teams.length);
+    assert.ok(medidas.every((d) => d.choice === `crisis:medida:${severa.id}`));
+
+    // Y un salto que NO es el heredado sigue rechazado.
+    const invalido = await h.post(`/game/${started.gameId}/phase`, { phase: 'investigar' }, host());
+    assert.equal(invalido.status, 409);
+  });
+});

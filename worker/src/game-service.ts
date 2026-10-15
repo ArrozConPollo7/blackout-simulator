@@ -900,7 +900,14 @@ export async function changePhase(
   const next = body.phase;
 
   if (!next) throw new ApiError(400, 'bad_request', 'Se espera {phase}');
-  if (!canTransition(game.phase, next)) {
+  /**
+   * Ventana de despliegue (plan 3): una app antigua solo conoce la fase `crisis` y pide
+   * `decidir_2` de un salto. Se acepta como transicion heredada: se resuelve la votacion con
+   * los votos que haya (sin votos, la medida mas severa) y la partida avanza igual. Asi el
+   * Worker nuevo puede salir antes que la app sin dejar el proyector atascado en la crisis.
+   */
+  const saltoHeredado = game.phase === 'crisis' && next === 'decidir_2';
+  if (!canTransition(game.phase, next) && !saltoHeredado) {
     throw new ApiError(
       409,
       'conflict',
@@ -933,8 +940,9 @@ export async function changePhase(
   }
 
   // Cerrar la votación: la medida ganadora se aplica a TODOS antes de las últimas decisiones.
-  if (next === 'decidir_2' && state.phase === 'crisis_votacion') {
-    state = await settleCrisisVote(deps, game, state, teams);
+  if (next === 'decidir_2' && (state.phase === 'crisis_votacion' || saltoHeredado)) {
+    const conVotacion: GameState = saltoHeredado ? { ...state, phase: 'crisis_votacion' } : state;
+    state = await settleCrisisVote(deps, game, conVotacion, teams);
   }
 
   const advanced = advancePhase(state, next, now);
