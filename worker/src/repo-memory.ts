@@ -112,10 +112,12 @@ export class InMemoryRepo implements GameRepo {
     this.writes.decisions += 1;
   }
 
-  async listDecisions(teamId: string): Promise<Array<Pick<DecisionRow, 'round' | 'choice'>>> {
+  async listDecisions(
+    teamId: string,
+  ): Promise<Array<Pick<DecisionRow, 'round' | 'choice' | 'created_at'>>> {
     return this.state.decisions
       .filter((d) => d.team_id === teamId)
-      .map((d) => ({ round: d.round, choice: d.choice }));
+      .map((d) => ({ round: d.round, choice: d.choice, created_at: d.created_at }));
   }
 
   /** Solo para tests: inspeccionar el historial completo. */

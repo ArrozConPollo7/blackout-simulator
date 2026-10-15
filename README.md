@@ -21,11 +21,13 @@ de la que sale cada decisión.
 | 2 | Realtime, decisiones por Worker, timer absoluto, vecindario 3D reactivo | ✅ verificado en navegador |
 | 3 | Entrada por QR con nombre de equipo, contraseña del Host, vecindario 3D reelaborado, sonido y animaciones | ✅ verificado en navegador |
 | 4 | Lenguaje de juego (sin jerga técnica), feedback inmediato al decidir, medidor de red, tira de sucesos y podio con celebración | ✅ verificado en navegador |
+| 5 | Aleatoriedad con semilla, pool ampliado + sorteo de situaciones, eventos aleatorios, crisis de intensidad variable y votación colectiva del aula (ver `PLAN_MEJORAS.md`) | ✅ verificado con tests, `--scan` y build |
 
-Verificación real: 93 tests (`npm test`), `npm run typecheck`, `npm run build`, `npm run sim`
-(partida completa sin UI) y una partida jugada de punta a punta en el navegador
-(contraseña → lobby con QR → alta de mesas con su nombre → investigar → decidir → crisis →
-decidir_2 → resultados).
+Verificación real: 154 tests (`npm test`), `npm run typecheck`, `npm run build`, `npm run sim`
+(partida completa sin UI) y `npm run sim -- --scan 120` (barrido: ninguna semilla deja la
+partida injugable y la semilla reproduce la partida entera). Más una partida jugada de punta a
+punta en el navegador (contraseña → lobby con QR → alta de mesas con su nombre → investigar →
+decidir → crisis → votación del aula → decidir_2 → resultados).
 
 ---
 
@@ -35,17 +37,23 @@ decidir_2 → resultados).
 types/game.ts              TeamState, GameState, Appliance + DecisionEffect, DecisionOption, TeamCase (motor)
 types/api.ts               Contratos HTTP (estado, decisiones, crisis, fases)
 content/                   El juego como DATOS
-  economy.ts               Tarifas, límites y regla del +30% de la crisis
+  economy.ts               Tarifas, límites, rango del alza de tarifa y presupuesto de eventos
   cases.ts                 6 casos de equipo (Familia Duque como plantilla del documento)
-  decisions.ts             Ronda 1 por aparato, 6 situaciones de Ronda 2 y la Ronda 2b
-  phases.ts                Secuencia y duración de las fases (fuente única también para la UI)
+  decisions.ts             Ronda 1 por aparato, 14 situaciones de Ronda 2 (se sortean 3-4) y la Ronda 2b
+  phases.ts                Secuencia y duración de las fases (incluye `crisis_votacion`)
+  crisis.ts                Alza sorteada, variante acompañante y las 4 medidas colectivas
+  events.ts                Catálogo de eventos aleatorios (apagón, subsidio, falla)
 engine/                    Motor puro (sin UI ni red)
   state.ts                 initialTeamState, advancePhase (máquina de fases + timer absoluto)
+  rng.ts                   PRNG determinista (mulberry32) y semilla de partida
+  draw.ts                  Sorteo de situaciones de Ronda 2 (clave: semilla + caso)
+  events.ts                Sorteo y aplicación de eventos aleatorios
+  crisis-vote.ts           Recuento de la votación y aplicación de la medida ganadora
   decisions.ts             applyDecision, describeEffect (microcopy con números reales)
-  crisis.ts                triggerCrisis (+30% sobre el consumo acumulado, idempotente)
+  crisis.ts                triggerCrisis (alza sorteada sobre el consumo acumulado, idempotente)
   results.ts               calculateFinalResults (puntaje: eficiencia + consumo + economía)
 worker/                    Cloudflare Worker: la única fuente de verdad
-  src/index.ts             Router: /game/start, /game/:id/{join,teams,state,decision,crisis,phase}, /host/verify, /health
+  src/index.ts             Router: /game/start, /game/:id/{join,teams,state,decision,crisis,crisis-vote,phase}, /host/verify, /health
   src/game-service.ts      Casos de uso (validación, aplicación, persistencia)
   src/repo.ts              SupabaseRepo (clave de servicio) · src/repo-memory.ts para tests
   wrangler.toml            Config del despliegue (var SUPABASE_URL; secretos aparte)
@@ -58,9 +66,9 @@ lib/                       Cliente del Worker, Realtime, timer, formato, estado 
   audio.ts                 Sonido sintetizado con Web Audio (sin archivos de audio)
 components/                HostGate, JoinQr, SoundToggle, NeighborhoodStage + neighborhood/…
 components/neighborhood/   Vecindario 3D: arquetipos, materiales, mobiliario urbano
-components/host/           GridMeter, DecisionFeed y PodiumBurst (el marcador del proyector)
-components/play/           AnimatedNumber y ChoiceButton (los 5 estados del toque en el móvil)
-tests/                     93 tests con `node --test` (sin dependencias extra)
+components/host/           GridMeter, DecisionFeed, CrisisVotePanel y PodiumBurst (el marcador del proyector)
+components/play/           AnimatedNumber, ChoiceButton, CrisisVoteCard, EffectChips (los 5 estados del toque en el móvil)
+tests/                     154 tests con `node --test` (sin dependencias extra)
 scripts/simulate-game.ts   Partida completa sin UI   ·  scripts/dev-api.ts  API local en memoria
 ```
 
@@ -108,6 +116,7 @@ reiniciar `dev:api`.
 | `SUPABASE_SERVICE_ROLE_KEY` | Worker (`secret`) | Escrituras: es el único que escribe |
 | `HOST_TOKEN` | Worker (`secret`) | Token clásico de host; sigue valiendo como credencial |
 | `HOST_PASSCODE` | Worker (`secret`) | Contraseña que se teclea en `/host`. Sin configurar vale **9806** |
+| `GAME_SEED` | Worker (`var`) | (Opcional) Semilla fija de las partidas: repetir el guion de una clase ya jugada |
 
 ### Cómo se siente la partida (Fase 4)
 
@@ -116,13 +125,35 @@ reiniciar `dev:api`.
 - **Al decidir, la respuesta es inmediata aunque la red tarde**: la opción se marca al instante, las
   demás se atenúan, se muestra «Enviando…» y el veredicto con sus números llega después (nunca
   antes). Hay vibración en el móvil y aviso de urgencia en los últimos 30 s.
-- **El proyector es un marcador vivo**: recorrido de fases 1-6, cronómetro con barra que se agota,
+- **El proyector es un marcador vivo**: recorrido de fases 1-6 (con la 4b, la votación del aula),
+  cronómetro con barra que se agota,
   medidor de carga de la red, contador de mesas que ya decidieron y una tira de sucesos reales
   («terminó la auditoría», «subió 2 puestos»).
 - **Un solo clic crea la partida**: la consola no acepta clics hasta que React toma el control del
   HTML, y el botón avisa con «Montando la sala…» mientras trabaja.
 - **El sondeo de respaldo va siempre** (cada 8 s con Realtime activo, cada 4 s sin él): una
   suscripción caída o apuntada a otro proyecto ya no deja las pantallas congeladas.
+
+### Aleatoriedad y votación (Fase 5)
+
+- **Cada partida es distinta, pero reproducible.** La partida tiene una **semilla** (se muestra en
+  el acta final) y todo sorteo sale de ella: la intensidad del alza de tarifa (20-45%, no siempre
+  30%), las 3-4 situaciones de Ronda 2 que le tocan a cada caso, el evento aleatorio de la ronda y
+  las medidas que se votan. Con `GAME_SEED=<semilla>` en el Worker, dos partidas repiten el mismo
+  guion; sin ella, cada partida saca la suya del id de la partida.
+- **Sorteo de situaciones.** El catálogo de Ronda 2 pasó de 6 a 14 situaciones y cada caso juega
+  3 o 4 sorteadas (el Worker rechaza cualquier otra). El peso de eficiencia se reparte entre las
+  sorteadas, así que todos pueden ganar los mismos 24 puntos.
+- **Eventos aleatorios** (uno por partida, en la ronda de decisiones, nunca repetido): apagón
+  parcial (un aparato no se puede intervenir esa ronda), subsidio sorpresa (+$8.000 a todos) y
+  falla de aparato (+20% de consumo hasta que se intervenga). Ninguno deja a un equipo sin jugada.
+- **La crisis se vota.** Al dispararse la crisis la partida entra en `crisis_votacion`: el aula ve
+  3 medidas de emergencia en el proyector, cada mesa vota una vez desde su celular (45 s) y la
+  ganadora —mayoría simple; en empate, la más severa— se aplica **a todos los equipos**. El
+  vecindario del proyector se pone nervioso mientras se vota y lanza una ola de luz al revelarse
+  el resultado.
+- **Auditoría del barrido:** `npm run sim -- --scan 200` juega 200 partidas con semillas
+  distintas y exige que ninguna deje la partida injugable y que la semilla la reproduzca.
 
 ### Entrada de los equipos (Fase 3)
 

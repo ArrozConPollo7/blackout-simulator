@@ -18,7 +18,14 @@
 
 import type { DecisionEffect, DecisionOption } from '../types/game.ts';
 import { CASE_BY_ID } from './cases.ts';
-import { TARIFA_ELECTRICIDAD, TARIFA_GAS, costoElectricidad, costoGas } from './economy.ts';
+import {
+  ROUND2_EFICIENCIA_TOTAL,
+  TARIFA_ELECTRICIDAD,
+  TARIFA_GAS,
+  costoElectricidad,
+  costoGas,
+} from './economy.ts';
+
 
 export interface ConsumptionRef {
   electricidad: number; // kWh
@@ -463,6 +470,237 @@ const SCENARIO_ALUMBRADO: DecisionScenario = {
   ]),
 };
 
+// ---------------------------------------------------------------------------
+// Pool ampliado de Ronda 2 (plan 1.1): mismas reglas de contenido, mas sabores.
+//
+// Cada situacion declara `requires` (los aparatos que menciona) y sus opciones se derivan
+// con `build()`: consumo neto + inversion, cero numeros sueltos. Cada situacion conserva la
+// estructura pedagogica del juego (una opcion de derroche, una equilibrada que es la unica
+// que sube eficiencia, una extrema que ahorra mas bajando confort) y algunas anaden una
+// cuarta opcion intermedia con inversion barata (plan 1.2).
+// ---------------------------------------------------------------------------
+
+const SCENARIO_OLA_DE_CALOR: DecisionScenario = {
+  id: 'ola-de-calor',
+  round: 'decidir',
+  requires: ['aire-acondicionado'],
+  title: 'Ola de calor de 40 °C',
+  prompt: 'El termómetro del barrio marca 40 °C a la sombra y la casa no se refresca sola.',
+  icon: 'thermostat',
+  options: build({ electricidad: 14, gas: 0 }, [
+    { id: 'r2:ola-de-calor:a', label: 'Aire a 18 °C toda la tarde', neto: { electricidad: 14 }, eficiencia: -3 },
+    {
+      id: 'r2:ola-de-calor:b',
+      label: 'Aire a 25 °C solo en las horas de sol',
+      neto: { electricidad: 7 },
+      eficiencia: 4,
+    },
+    {
+      id: 'r2:ola-de-calor:c',
+      label: 'Ventiladores de techo y ventanas abiertas',
+      neto: { electricidad: 1.2 },
+      eficiencia: -2,
+    },
+    {
+      id: 'r2:ola-de-calor:d',
+      label: 'Aire a 23 °C con termostato programable',
+      neto: { electricidad: 5.6 },
+      inversion: 800,
+      eficiencia: 1,
+    },
+  ]),
+};
+
+const SCENARIO_DESPENSA: DecisionScenario = {
+  id: 'despensa-noche',
+  round: 'decidir',
+  requires: ['nevera', 'iluminacion'],
+  title: 'La cocina de noche',
+  prompt: 'Todos duermen y la cocina sigue encendida: la nevera zumba y la luz queda de fondo.',
+  icon: 'bedtime',
+  options: build({ electricidad: 5.2, gas: 0 }, [
+    {
+      id: 'r2:despensa-noche:a',
+      label: 'Nevera al máximo y la luz de la cocina toda la noche',
+      neto: { electricidad: 6.4 },
+      eficiencia: -3,
+    },
+    {
+      id: 'r2:despensa-noche:b',
+      label: 'Nevera a 4 °C y apagar la luz al salir',
+      neto: { electricidad: 2.4 },
+      eficiencia: 4,
+    },
+    {
+      id: 'r2:despensa-noche:c',
+      label: 'Desenchufar la nevera de noche',
+      neto: { electricidad: 1.4 },
+      eficiencia: -5,
+    },
+  ]),
+};
+
+const SCENARIO_COCINA_CALIENTE: DecisionScenario = {
+  id: 'cocina-caliente',
+  round: 'decidir',
+  requires: ['aire-acondicionado', 'nevera'],
+  title: 'El aire pelea con la nevera',
+  prompt: 'La nevera pegada a la pared calienta la cocina y el aire acondicionado trabaja el doble.',
+  icon: 'mode_fan',
+  options: build({ electricidad: 8, gas: 0 }, [
+    {
+      id: 'r2:cocina-caliente:a',
+      label: 'Aire a 18 °C con la nevera pegada a la pared',
+      neto: { electricidad: 9.6 },
+      eficiencia: -3,
+    },
+    {
+      id: 'r2:cocina-caliente:b',
+      label: 'Separar la nevera y subir el aire a 24 °C',
+      neto: { electricidad: 4.4 },
+      eficiencia: 4,
+    },
+    {
+      id: 'r2:cocina-caliente:c',
+      label: 'Apagar el aire y aguantar el calor de la cocina',
+      neto: { electricidad: 2.6 },
+      eficiencia: -4,
+    },
+  ]),
+};
+
+const SCENARIO_TRABAJO_NOCTURNO: DecisionScenario = {
+  id: 'trabajo-nocturno',
+  round: 'decidir',
+  requires: ['computador', 'iluminacion'],
+  title: 'Trabajo de noche',
+  prompt: 'Dos computadores abiertos y todas las luces del espacio encendidas hasta tarde.',
+  icon: 'nightlight',
+  options: build({ electricidad: 3.2, gas: 0 }, [
+    {
+      id: 'r2:trabajo-nocturno:a',
+      label: 'Dos computadores y todas las luces hasta la medianoche',
+      neto: { electricidad: 4.6 },
+      eficiencia: -3,
+    },
+    {
+      id: 'r2:trabajo-nocturno:b',
+      label: 'Pantallas en suspensión y una lámpara de escritorio',
+      neto: { electricidad: 1.5 },
+      eficiencia: 4,
+    },
+    {
+      id: 'r2:trabajo-nocturno:c',
+      label: 'Trabajar solo con la luz de la pantalla',
+      neto: { electricidad: 0.6 },
+      eficiencia: -4,
+    },
+    {
+      id: 'r2:trabajo-nocturno:d',
+      label: 'Regletas con interruptor y bombillas LED',
+      neto: { electricidad: 1.2 },
+      inversion: 800,
+      eficiencia: 1,
+    },
+  ]),
+};
+
+const SCENARIO_PELICULA: DecisionScenario = {
+  id: 'noche-de-pelicula',
+  round: 'decidir',
+  requires: ['televisor'],
+  title: 'Noche de película',
+  prompt: 'El televisor lleva encendido desde la tarde, aunque nadie lo esté mirando.',
+  icon: 'movie',
+  options: build({ electricidad: 1.2, gas: 0 }, [
+    { id: 'r2:noche-de-pelicula:a', label: 'Televisor de fondo 6 h', neto: { electricidad: 1.2 }, eficiencia: -3 },
+    {
+      id: 'r2:noche-de-pelicula:b',
+      label: 'Ver la película y apagarlo al terminar',
+      neto: { electricidad: 0.5 },
+      eficiencia: 4,
+    },
+    {
+      id: 'r2:noche-de-pelicula:c',
+      label: 'Verla en el celular y dejar el televisor apagado',
+      neto: { electricidad: 0.15 },
+      eficiencia: -3,
+    },
+  ]),
+};
+
+const SCENARIO_COLADA_FRIA: DecisionScenario = {
+  id: 'colada-fria',
+  round: 'decidir',
+  requires: ['lavadora'],
+  title: 'Colada de la semana',
+  prompt: 'Hay ropa acumulada y la lavadora ofrece programas de 60 °C, 40 °C y 30 °C.',
+  icon: 'wash',
+  options: build({ electricidad: 2.64, gas: 0 }, [
+    { id: 'r2:colada-fria:a', label: 'Ciclo de 60 °C a media carga', neto: { electricidad: 3.2 }, eficiencia: -3 },
+    {
+      id: 'r2:colada-fria:b',
+      label: 'Ciclo de 30 °C con la carga llena',
+      neto: { electricidad: 1.32 },
+      eficiencia: 4,
+    },
+    {
+      id: 'r2:colada-fria:c',
+      label: 'Lavar a mano en el lavaplatos',
+      neto: { electricidad: 0.3 },
+      eficiencia: -4,
+    },
+  ]),
+};
+
+const SCENARIO_DUCHA: DecisionScenario = {
+  id: 'ducha-larga',
+  round: 'decidir',
+  requires: ['calentador-gas'],
+  title: 'Cuatro duchas en fila',
+  prompt: 'El calentador mantiene el agua a 70 °C todo el día para cuatro duchas largas.',
+  icon: 'shower',
+  options: build({ electricidad: 0, gas: 6 }, [
+    {
+      id: 'r2:ducha-larga:a',
+      label: 'Cuatro duchas de 20 minutos a 70 °C',
+      neto: { gas: 7.2 },
+      eficiencia: -3,
+    },
+    {
+      id: 'r2:ducha-larga:b',
+      label: 'Duchas de 8 minutos con el calentador a 55 °C',
+      neto: { gas: 3 },
+      eficiencia: 4,
+    },
+    { id: 'r2:ducha-larga:c', label: 'Duchas con agua fría', neto: { gas: 0.6 }, eficiencia: -4 },
+  ]),
+};
+
+const SCENARIO_CENA: DecisionScenario = {
+  id: 'cena-familiar',
+  round: 'decidir',
+  requires: ['estufa-gas'],
+  title: 'Cena para seis',
+  prompt: 'La estufa y el horno trabajan al mismo tiempo para la cena de toda la familia.',
+  icon: 'restaurant',
+  options: build({ electricidad: 0, gas: 3.2 }, [
+    {
+      id: 'r2:cena-familiar:a',
+      label: 'Horno encendido 90 minutos para todo',
+      neto: { gas: 3.6 },
+      eficiencia: -3,
+    },
+    {
+      id: 'r2:cena-familiar:b',
+      label: 'Olla a presión 30 min y horno 20 min',
+      neto: { gas: 1.5 },
+      eficiencia: 4,
+    },
+    { id: 'r2:cena-familiar:c', label: 'Cena fría sin encender la estufa', neto: { gas: 0.3 }, eficiencia: -3 },
+  ]),
+};
+
 /** Ronda 2b: se juega DESPUES del evento sorpresa, con el precio ya aumentado. */
 const SCENARIO_CRISIS_FINAL: DecisionScenario = {
   id: 'crisis-final',
@@ -503,6 +741,11 @@ export const ROUND1_SCENARIOS: DecisionScenario[] = APPLIANCE_CATALOG.map((a) =>
   options: a.options,
 }));
 
+/**
+ * Catalogo de situaciones de Ronda 2. Se amplio (plan 1.1) de 6 a 14: la partida ya no
+ * ofrece siempre las mismas seis, cada equipo recibe un subconjunto sorteado (ver
+ * `drawnScenarios`). Los seis originales siguen primero para no romper `simulate-game`.
+ */
 export const ROUND2_SCENARIOS: DecisionScenario[] = [
   SCENARIO_CALOR,
   SCENARIO_COCINA,
@@ -510,6 +753,14 @@ export const ROUND2_SCENARIOS: DecisionScenario[] = [
   SCENARIO_ENTRETENIMIENTO,
   SCENARIO_LAVADO,
   SCENARIO_ALUMBRADO,
+  SCENARIO_OLA_DE_CALOR,
+  SCENARIO_DESPENSA,
+  SCENARIO_COCINA_CALIENTE,
+  SCENARIO_TRABAJO_NOCTURNO,
+  SCENARIO_PELICULA,
+  SCENARIO_COLADA_FRIA,
+  SCENARIO_DUCHA,
+  SCENARIO_CENA,
 ];
 
 export const ROUND2B_SCENARIOS: DecisionScenario[] = [SCENARIO_CRISIS_FINAL];
@@ -529,12 +780,25 @@ export const OPTIONS_BY_ID: Record<string, DecisionOption> = Object.fromEntries(
   Object.values(SCENARIOS_BY_ID).flatMap((s) => s.options.map((o) => [o.id, o] as const)),
 );
 
-/** Opcion -> clave de escenario ya resuelto (para impedir responder dos veces lo mismo). */
+/**
+ * Opcion -> clave de escenario ya resuelto (para impedir responder dos veces lo mismo).
+ *
+ * Tambien se usa con las filas que NO son decisiones de equipo (el recargo de la crisis, los
+ * eventos aleatorios y los votos de la crisis), porque el historial es unico: cada familia
+ * tiene su propia clave (`crisis:price_shock`, `event:subsidio-sorpresa`, `vote:<medida>`)
+ * para que no se confundan entre si ni con `r2:<situacion>`.
+ */
 export function scenarioKeyOfOption(optionId: string): string {
   const parts = optionId.split(':');
   if (parts[0] === 'r1') return `r1:${parts[1]}`;
   if (parts[0] === 'r2b') return 'r2b';
-  return `r2:${parts[1]}`;
+  if (parts[0] === 'r2') return `r2:${parts[1]}`;
+  return parts.length > 1 ? `${parts[0]}:${parts[1]}` : optionId;
+}
+
+/** true si la fila del historial corresponde a una decision de equipo (r1/r2/r2b). */
+export function isDecisionOptionId(choice: string): boolean {
+  return /^(r1|r2|r2b):/.test(choice);
 }
 
 /**
@@ -564,13 +828,32 @@ export function scenariosForCase(
 }
 
 /**
- * Cuantas situaciones de Ronda 2 juega el caso con esos aparatos.
- * Base del reparto de peso: `situacionesDeRonda2 / jugables`.
+ * Cuantas situaciones de Ronda 2 recibe cada equipo (plan 1.1).
+ * Ningun equipo juega el catalogo completo: se sortean 3 o 4 de las que sus aparatos
+ * permiten. Si solo tuviera 3 jugables, juega esas 3 (no hay de donde recortar).
  */
-export function pesoEficienciaR2(appliances: string[] | null): number {
-  const jugables = scenariosForCase('decidir', appliances).length;
-  if (!jugables) return 1;
-  return ROUND2_SCENARIOS.length / jugables;
+export const ROUND2_DRAW_MIN = 3;
+export const ROUND2_DRAW_MAX = 4;
+
+/**
+ * Cuantas situaciones de Ronda 2 juega el equipo con esos aparatos (sin sorteo).
+ * Base del reparto de peso: `pesoEficienciaR2(jugables)`.
+ */
+export function pesoBaseR2(appliances: string[] | null): number {
+  return pesoEficienciaR2(scenariosForCase('decidir', appliances).length);
+}
+
+/**
+ * Peso del delta de eficiencia de cada situacion sorteada.
+ *
+ * La tesis pedagogica exige que TODOS los equipos puedan ganar o perder lo mismo en la
+ * Ronda 2, jueguen las situaciones que jueguen: con `ROUND2_EFICIENCIA_TOTAL` puntos en
+ * juego y una opcion equilibrada de +4 por situacion, cada una reparte `total / (4 x n)`.
+ * Con 3 situaciones sorteadas vale 2 y con 4 vale 1,5: el maximo es 24 en ambos casos.
+ */
+export function pesoEficienciaR2(drawCount: number): number {
+  const n = Math.max(1, Math.trunc(drawCount));
+  return ROUND2_EFICIENCIA_TOTAL / (4 * n);
 }
 
 /** Aparatos que menciona una situacion (los que hay que descontar de la Ronda 1). */

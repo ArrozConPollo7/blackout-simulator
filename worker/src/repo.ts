@@ -59,7 +59,11 @@ export interface GameRepo {
     patch: Partial<Pick<GameRow, 'phase' | 'timer_ends_at' | 'crisis_triggered'>>,
   ): Promise<GameRow>;
   logDecision(input: DecisionLogInput): Promise<void>;
-  listDecisions(teamId: string): Promise<Array<Pick<DecisionRow, 'round' | 'choice'>>>;
+  /**
+   * Historial de un equipo. Incluye `created_at` porque el Worker lo usa como marca de los
+   * votos de la crisis (`CrisisVote.votedAt`), sin columnas nuevas.
+   */
+  listDecisions(teamId: string): Promise<Array<Pick<DecisionRow, 'round' | 'choice' | 'created_at'>>>;
 }
 
 export class RepoError extends Error {
@@ -167,12 +171,15 @@ export class SupabaseRepo implements GameRepo {
     if (error) throw new RepoError(error.message, error);
   }
 
-  async listDecisions(teamId: string): Promise<Array<Pick<DecisionRow, 'round' | 'choice'>>> {
+  async listDecisions(
+    teamId: string,
+  ): Promise<Array<Pick<DecisionRow, 'round' | 'choice' | 'created_at'>>> {
     const { data, error } = await this.client
       .from('decisions')
-      .select('round, choice')
-      .eq('team_id', teamId);
+      .select('round, choice, created_at')
+      .eq('team_id', teamId)
+      .order('created_at', { ascending: true });
     if (error) throw new RepoError(error.message, error);
-    return (data as Array<Pick<DecisionRow, 'round' | 'choice'>>) ?? [];
+    return (data as Array<Pick<DecisionRow, 'round' | 'choice' | 'created_at'>>) ?? [];
   }
 }

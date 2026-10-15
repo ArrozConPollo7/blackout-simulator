@@ -101,3 +101,40 @@ export default function EffectChips({
     </span>
   );
 }
+
+/**
+ * Aviso inline de un evento aleatorio (plan 2.2 y 4.2): el mismo lenguaje visual de los chips,
+ * pero contando QUE pasó. El texto llega ya escrito por el centro de control, en lenguaje de
+ * jugador: aquí no se redacta ni se calcula nada.
+ */
+export function EventAlert({
+  title,
+  description,
+  icon,
+  effect,
+  tono = 'aviso',
+}: {
+  title: string;
+  description: string;
+  icon: string;
+  /** Efecto ya aplicado por el centro de control (el subsidio, por ejemplo). */
+  effect?: DecisionEffect;
+  /** 'aviso' para lo que quita y 'alivio' para lo que suma. */
+  tono?: 'aviso' | 'alivio';
+}) {
+  const color = tono === 'alivio' ? 'border-accent-eficiencia/50 bg-accent-eficiencia/10' : 'border-accent-gas/50 bg-accent-gas/10';
+  const colorIcono = tono === 'alivio' ? 'text-accent-eficiencia' : 'text-accent-gas';
+
+  return (
+    <div className={`flex flex-col gap-1.5 rounded-lg border px-3 py-2 anim-slide-in ${color}`}>
+      <span className="flex items-center gap-1.5">
+        <span className={`material-symbols-outlined text-[16px] ${colorIcono}`}>{icon}</span>
+        <strong className="font-label-md text-label-md uppercase tracking-wide text-text-primary">
+          {title}
+        </strong>
+      </span>
+      <p className="font-body-sm text-body-sm text-text-secondary">{description}</p>
+      {effect && <EffectChips effect={effect} />}
+    </div>
+  );
+}

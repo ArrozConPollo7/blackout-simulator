@@ -11,6 +11,7 @@ import {
   EFICIENCIA_INICIAL,
   PRESUPUESTO_INICIAL,
 } from '../content/economy.ts';
+import { crisisMeasuresFor, crisisRateFor, crisisVariantFor } from '../content/crisis.ts';
 
 /** Error de transicion invalida: el Worker lo traduce a 409. */
 export class PhaseTransitionError extends Error {
@@ -38,12 +39,23 @@ export function initialTeamState(identity: Pick<TeamState, 'id' | 'name' | 'colo
   };
 }
 
-export function initialGameState(teams: TeamState[], now: Date = new Date()): GameState {
+export function initialGameState(
+  teams: TeamState[],
+  now: Date = new Date(),
+  seed = 0,
+): GameState {
   return {
     phase: 'lobby',
     timerEndsAt: now.toISOString(),
     crisisTriggered: false,
     teams,
+    seed,
+    crisisRate: crisisRateFor(seed),
+    crisisVariant: crisisVariantFor(seed),
+    activeEvents: [],
+    crisisMeasures: crisisMeasuresFor(seed),
+    crisisVotes: [],
+    crisisResolvedMeasureId: null,
   };
 }
 

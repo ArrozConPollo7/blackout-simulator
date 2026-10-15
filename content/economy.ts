@@ -32,9 +32,31 @@ export const CONSUMO_REFERENCIA_GAS = 100; // m3
 export const PRESUPUESTO_INICIAL = 100000; // $
 export const EFICIENCIA_INICIAL = 50; // %
 
-/** Evento sorpresa: "el precio de la electricidad aumento un 30%". */
+/**
+ * Evento sorpresa. El alza de tarifa ya no es siempre +30% (plan 2.3): al iniciar la
+ * partida se sortea un porcentaje entre `CRISIS_RATE_MIN` y `CRISIS_RATE_MAX` con la semilla.
+ * `CRISIS_PRICE_MULTIPLIER` / `CRISIS_SURCHARGE_RATE` quedan como el valor central de la
+ * calibracion (el que usa el balanceo de referencia y los ejemplos del documento).
+ */
 export const CRISIS_PRICE_MULTIPLIER = 1.3;
 export const CRISIS_SURCHARGE_RATE = CRISIS_PRICE_MULTIPLIER - 1; // 0.3
+export const CRISIS_RATE_MIN = 0.2;
+export const CRISIS_RATE_MAX = 0.45;
+/** Paso del sorteo: la tarifa sube en saltos de 1%, no en porcentajes con decimales. */
+export const CRISIS_RATE_STEP = 0.01;
+
+/**
+ * Puntos de eficiencia que reparte la Ronda 2 entre todos los equipos, jueguen las
+ * situaciones que jueguen (ver `pesoEficienciaR2`). Es el invariante que hace comparable
+ * una partida con 3 situaciones sorteadas y otra con 4.
+ */
+export const ROUND2_EFICIENCIA_TOTAL = 24;
+
+/** Presupuesto que reparte el evento "subsidio sorpresa" a cada equipo (plan 2.2). */
+export const SUBSIDIO_SORPRESA = 8000;
+
+/** Recargo de consumo que deja una falla de aparato, en tanto por uno (plan 2.2). */
+export const FALLA_APARATO_RATE = 0.2;
 
 export const LIMITES = {
   electricidad: { min: 0, max: 220 },
@@ -58,10 +80,16 @@ export function costoConsumo(consumo: { electricidad: number; gas: number }): nu
 }
 
 /**
- * Sobrecosto del evento sorpresa: el +30% de tarifa se aplica sobre el consumo
+ * Sobrecosto del evento sorpresa: el alza de tarifa se aplica sobre el consumo
  * electrico ACUMULADO de cada equipo, no de forma pareja. Un equipo que ya redujo
- * (70 kWh) paga 30% de 70 kWh y uno que dejo todo encendido (104 kWh) paga 30% de 104 kWh.
+ * (70 kWh) paga el alza de 70 kWh y uno que dejo todo encendido (104 kWh) la paga de 104.
+ *
+ * `rate` es la intensidad sorteada para esta partida (20-45%); sin argumento vale el
+ * 30% central de la calibracion.
  */
-export function sobrecostoCrisis(electricidadAcumulada: number): number {
-  return Math.round(costoElectricidad(Math.max(0, electricidadAcumulada)) * CRISIS_SURCHARGE_RATE);
+export function sobrecostoCrisis(
+  electricidadAcumulada: number,
+  rate: number = CRISIS_SURCHARGE_RATE,
+): number {
+  return Math.round(costoElectricidad(Math.max(0, electricidadAcumulada)) * rate);
 }

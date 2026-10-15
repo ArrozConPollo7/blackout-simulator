@@ -41,6 +41,9 @@ const option = (id: string) => {
   return found;
 };
 
+/** Crisis de referencia: el 30% central y sin recargo de gas, para comparar numeros exactos. */
+const VARIANTE_SIN_GAS = { id: 'solo-electricidad', label: 'Solo sube la luz', gasSurchargeRate: 0 };
+
 // --- advancePhase ----------------------------------------------------------
 
 describe('advancePhase', () => {
@@ -193,6 +196,13 @@ describe('triggerCrisis', () => {
       phase: 'decidir',
       timerEndsAt: new Date().toISOString(),
       crisisTriggered: false,
+      seed: 7,
+      crisisRate: CRISIS_SURCHARGE_RATE,
+      crisisVariant: VARIANTE_SIN_GAS,
+      activeEvents: [],
+      crisisMeasures: [],
+      crisisVotes: [],
+      crisisResolvedMeasureId: null,
       teams: [team({ id: 'eficiente', electricidad: 72 }), team({ id: 'derrochador', electricidad: 104 })],
     };
 
@@ -223,6 +233,13 @@ describe('triggerCrisis', () => {
       phase: 'crisis',
       timerEndsAt: new Date().toISOString(),
       crisisTriggered: false,
+      seed: 7,
+      crisisRate: CRISIS_SURCHARGE_RATE,
+      crisisVariant: VARIANTE_SIN_GAS,
+      activeEvents: [],
+      crisisMeasures: [],
+      crisisVotes: [],
+      crisisResolvedMeasureId: null,
       teams: [team({ electricidad: 90 })],
     };
     const once = triggerCrisis(state);
@@ -236,6 +253,13 @@ describe('triggerCrisis', () => {
       phase: 'crisis',
       timerEndsAt: new Date().toISOString(),
       crisisTriggered: false,
+      seed: 7,
+      crisisRate: CRISIS_SURCHARGE_RATE,
+      crisisVariant: VARIANTE_SIN_GAS,
+      activeEvents: [],
+      crisisMeasures: [],
+      crisisVotes: [],
+      crisisResolvedMeasureId: null,
       teams: [team({ electricidad: 80, gas: 40, eficiencia: 70 })],
     };
     const crisis = triggerCrisis(state);
@@ -262,6 +286,13 @@ describe('calculateFinalResults', () => {
       phase: 'resultados',
       timerEndsAt: new Date().toISOString(),
       crisisTriggered: true,
+      seed: 7,
+      crisisRate: CRISIS_SURCHARGE_RATE,
+      crisisVariant: VARIANTE_SIN_GAS,
+      activeEvents: [],
+      crisisMeasures: [],
+      crisisVotes: [],
+      crisisResolvedMeasureId: null,
       teams: [
         team({ id: 'b', name: 'Beta', eficiencia: 41, presupuesto: 20000 }),
         team({ id: 'a', name: 'Alfa', eficiencia: 88, presupuesto: 30000 }),
@@ -285,6 +316,13 @@ describe('calculateFinalResults', () => {
       phase: 'resultados',
       timerEndsAt: new Date().toISOString(),
       crisisTriggered: false,
+      seed: 7,
+      crisisRate: CRISIS_SURCHARGE_RATE,
+      crisisVariant: VARIANTE_SIN_GAS,
+      activeEvents: [],
+      crisisMeasures: [],
+      crisisVotes: [],
+      crisisResolvedMeasureId: null,
       teams: [
         team({ id: 'pobre', name: 'Pobre', eficiencia: 70, presupuesto: 10000 }),
         team({ id: 'rico', name: 'Rico', eficiencia: 70, presupuesto: 60000 }),
@@ -303,6 +341,13 @@ describe('calculateFinalResults', () => {
       phase: 'resultados',
       timerEndsAt: new Date().toISOString(),
       crisisTriggered: false,
+      seed: 7,
+      crisisRate: CRISIS_SURCHARGE_RATE,
+      crisisVariant: VARIANTE_SIN_GAS,
+      activeEvents: [],
+      crisisMeasures: [],
+      crisisVotes: [],
+      crisisResolvedMeasureId: null,
       teams: [
         team({ id: '1', eficiencia: 74, presupuesto: 64500 }),
         team({ id: '2', eficiencia: 41, presupuesto: 76000 }),
@@ -336,6 +381,13 @@ describe('calculateFinalResults', () => {
       phase: 'resultados',
       timerEndsAt: new Date().toISOString(),
       crisisTriggered: true,
+      seed: 7,
+      crisisRate: CRISIS_SURCHARGE_RATE,
+      crisisVariant: VARIANTE_SIN_GAS,
+      activeEvents: [],
+      crisisMeasures: [],
+      crisisVotes: [],
+      crisisResolvedMeasureId: null,
       teams: [
         team({ id: 'a', electricidad: 72, gas: 45, eficiencia: 80, presupuesto: 82000 }),
         team({ id: 'b', electricidad: 108, gas: 60, eficiencia: 40, presupuesto: 50000 }),
@@ -360,6 +412,13 @@ describe('calculateFinalResults', () => {
       phase: 'resultados',
       timerEndsAt: new Date().toISOString(),
       crisisTriggered: false,
+      seed: 7,
+      crisisRate: CRISIS_SURCHARGE_RATE,
+      crisisVariant: VARIANTE_SIN_GAS,
+      activeEvents: [],
+      crisisMeasures: [],
+      crisisVotes: [],
+      crisisResolvedMeasureId: null,
       teams: [team({ id: 'b' }), team({ id: 'a' })],
     };
     const snapshot = JSON.stringify(state);

@@ -31,10 +31,19 @@ const BANNERS: Record<Phase, TextoBanner> = {
   },
   decidir: {
     titulo: 'RONDA 2 · HORA DE DECIDIR',
-    detalle: 'Seis situaciones, tres opciones cada una',
+    detalle: 'Te tocan entre tres y cuatro situaciones: elige con cabeza',
     tono: 'normal',
   },
-  crisis: { titulo: '¡CRISIS TARIFARIA!', detalle: 'La electricidad sube 30%', tono: 'crisis' },
+  crisis: {
+    titulo: '¡CRISIS TARIFARIA!',
+    detalle: 'La red se sobrecarga y la luz sube para todos',
+    tono: 'crisis',
+  },
+  crisis_votacion: {
+    titulo: '¡EL AULA VOTA!',
+    detalle: 'Tres medidas de emergencia: elegid una y aguantadla entre todos',
+    tono: 'crisis',
+  },
   decidir_2: {
     titulo: 'RONDA FINAL · ÚLTIMAS DECISIONES',
     detalle: 'Cada kWh cuesta más: decide con la tarifa nueva',

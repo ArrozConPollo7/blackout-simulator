@@ -1,4 +1,5 @@
 import { GameState, TeamState, Appliance, DecisionCardOption } from '@/types/game';
+import { crisisMeasuresFor, crisisVariantFor } from '@/content/crisis';
 
 /**
  * Datos MOCK del cascarón visual (Fase 0).
@@ -77,6 +78,13 @@ export const mockGameState: GameState = {
   timerEndsAt: new Date(Date.now() + 3 * 60 * 1000 + 42 * 1000).toISOString(),
   crisisTriggered: false,
   teams: mockTeams,
+  seed: 20260915,
+  crisisRate: 0.3,
+  crisisVariant: crisisVariantFor(20260915),
+  activeEvents: [],
+  crisisMeasures: crisisMeasuresFor(20260915),
+  crisisVotes: [],
+  crisisResolvedMeasureId: null,
 };
 
 export const mockAppliances: Appliance[] = [

@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p worker/tsconfig.json --noEmit",
     "sim": "node scripts/simulate-game.ts",
     "sim:mixed": "node scripts/simulate-game.ts --mixed",
+    "sim:scan": "node scripts/simulate-game.ts --scan 200",
     "dev:api": "node scripts/dev-api.ts"
   },
   "dependencies": {

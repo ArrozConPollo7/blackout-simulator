@@ -6,10 +6,21 @@
  * probar el flujo completo sin red.
  */
 
-import type { DecisionEffect, GameState, Phase, TeamState } from '../../types/game.ts';
+import type {
+  CrisisMeasure,
+  CrisisOutcome,
+  CrisisVote,
+  DecisionEffect,
+  GameEventInstance,
+  GameState,
+  Phase,
+  TeamState,
+} from '../../types/game.ts';
 import type {
   CaseView,
   CrisisResponse,
+  CrisisVoteRequest,
+  CrisisVoteResponse,
   DecisionRequest,
   DecisionResponse,
   GameStateResponse,
@@ -25,22 +36,34 @@ import {
   APPLIANCE_BY_ID,
   OPTIONS_BY_ID,
   findOptionInScenario,
+  isDecisionOptionId,
   resolveScenarioForOption,
   scenarioKeyOfOption,
-  pesoEficienciaR2,
 } from '../../content/decisions.ts';
 import type { DecisionScenario } from '../../content/decisions.ts';
+import { crisisMeasuresFor, crisisRateFor, crisisVariantFor } from '../../content/crisis.ts';
 import { canTransition, nextPhaseOf, roundForPhase } from '../../content/phases.ts';
 import {
   advancePhase,
   applyDecision,
+  applyEventEffect,
   calculateFinalResults,
   crisisSurchargeFor,
   describeEffect,
   type OpcionesDeAplicacion,
+  drawnScenarioIdsForCase,
+  drawEvents,
+  eventEffectForDecision,
+  eventLogKey,
   initialGameState,
   initialTeamState,
+  isEventApplied,
+  lockedApplianceFor,
+  markApplied,
+  pesoForTeam,
   puntosFor,
+  resolveCrisisVote,
+  seedForGame,
   triggerCrisis,
 } from '../../engine/index.ts';
 import type { DecisionLogInput, DecisionRow, GameRepo, GameRow, TeamRow } from './repo.ts';
@@ -54,6 +77,8 @@ export interface ServiceDeps {
   /** Contraseña que se teclea en la consola del Host. Si falta vale el default. */
   hostPasscode?: string;
   allowInsecureHost?: boolean;
+  /** Semilla fija de las partidas (`GAME_SEED`); null = cada partida usa la suya. */
+  seed?: number | null;
 }
 
 /** Postgres devuelve `numeric` como string: nunca hay que operar con strings. */
@@ -76,12 +101,148 @@ export function toTeamState(row: TeamRow): TeamState {
   };
 }
 
-export function toGameState(game: GameRow, teams: TeamRow[]): GameState {
+export function toGameState(game: GameRow, teams: TeamRow[], seed = 0): GameState {
   return {
     phase: game.phase,
     timerEndsAt: game.timer_ends_at ?? new Date(0).toISOString(),
     crisisTriggered: Boolean(game.crisis_triggered),
     teams: teams.map(toTeamState),
+    seed,
+    crisisRate: crisisRateFor(seed),
+    crisisVariant: crisisVariantFor(seed),
+    activeEvents: [],
+    crisisMeasures: crisisMeasuresFor(seed),
+    crisisVotes: [],
+    crisisResolvedMeasureId: null,
+  };
+}
+
+/** Semilla de esta partida: la fija `GAME_SEED`, o su propio id si no hay ninguna. */
+function seedOf(deps: ServiceDeps, gameId: string): number {
+  return seedForGame(gameId, deps.seed ?? null);
+}
+
+/** Filas del historial de cada equipo (una sola lectura por equipo). */
+async function choicesByTeam(
+  deps: ServiceDeps,
+  teams: readonly TeamRow[],
+): Promise<Record<string, Array<Pick<DecisionRow, 'round' | 'choice' | 'created_at'>>>> {
+  const out: Record<string, Array<Pick<DecisionRow, 'round' | 'choice' | 'created_at'>>> = {};
+  for (const row of teams) out[row.id] = await deps.repo.listDecisions(row.id);
+  return out;
+}
+
+/** Eventos del aula ya registrados en el historial (para no repetirlos). */
+function usedEventKeys(historial: Array<Pick<DecisionRow, 'round' | 'choice'>>): string[] {
+  return [...new Set(historial.map((d) => d.choice).filter((c) => c.startsWith('event:')))];
+}
+
+/** Votos de la crisis, reconstruidos del historial (`vote:<medida>`, ronda `crisis_vote`). */
+export function crisisVotesOf(
+  teams: readonly TeamRow[],
+  historial: Record<string, Array<Pick<DecisionRow, 'round' | 'choice' | 'created_at'>>>,
+): CrisisVote[] {
+  const votos: CrisisVote[] = [];
+  for (const row of teams) {
+    const fila = historial[row.id]?.find((d) => d.choice.startsWith('vote:'));
+    if (fila) {
+      votos.push({
+        teamId: row.id,
+        measureId: fila.choice.slice('vote:'.length),
+        votedAt: fila.created_at,
+      });
+    }
+  }
+  return votos;
+}
+
+/** Medida ya aplicada a la partida (`crisis:medida:<id>` en el historial), si la hay. */
+function resolvedMeasureIdOf(
+  historial: Array<Pick<DecisionRow, 'round' | 'choice'>>,
+): string | null {
+  const fila = historial.find((d) => d.choice.startsWith('crisis:medida:'));
+  return fila ? fila.choice.slice('crisis:medida:'.length) : null;
+}
+
+/** Resultado de la votación: la medida aplicada manda; el recuento se relee para mostrarlo. */
+function outcomeOf(
+  measures: readonly CrisisMeasure[],
+  votos: readonly CrisisVote[],
+  medidaId: string | null,
+): CrisisOutcome | null {
+  if (!medidaId) return null;
+  const medida = measures.find((m) => m.id === medidaId);
+  if (!medida) return null;
+  const votosDe = votos.filter((v) => v.measureId === medida.id).length;
+  const empatadas = measures.filter(
+    (m) => votos.filter((v) => v.measureId === m.id).length === Math.max(...measures.map((x) => votos.filter((v) => v.measureId === x.id).length)),
+  ).length;
+  return {
+    measureId: medida.id,
+    label: medida.label,
+    description: medida.description,
+    effect: medida.effect,
+    votes: votosDe,
+    totalVotes: votos.length,
+    tie: empatadas > 1,
+  };
+}
+
+/** Estado completo: el cliente lo pide al montar y cada vez que Realtime avisa un cambio. */
+export async function getGameState(deps: ServiceDeps, gameId: string): Promise<GameStateResponse> {
+  const { game, teams } = await loadGame(deps, gameId);
+  const seed = seedOf(deps, game.id);
+  const historial = await choicesByTeam(deps, teams);
+  const todas = Object.values(historial).flat();
+  const state = toGameState(game, teams, seed);
+
+  const cases: Record<string, CaseView> = {};
+  const answered: Record<string, string[]> = {};
+  const assignedScenarios: Record<string, string[]> = {};
+  for (const row of teams) {
+    cases[row.id] = caseView(row.case_id);
+    answered[row.id] = [
+      ...new Set(
+        historial[row.id].filter((d) => isDecisionOptionId(d.choice)).map((d) => scenarioKeyOfOption(d.choice)),
+      ),
+    ];
+    assignedScenarios[row.id] = drawnScenarioIdsForCase(seed, row.case_id);
+  }
+
+  const votos = crisisVotesOf(teams, historial);
+  const medidaAplicada = resolvedMeasureIdOf(todas);
+
+  return {
+    gameId: game.id,
+    phase: state.phase,
+    timerEndsAt: state.timerEndsAt,
+    crisisTriggered: state.crisisTriggered,
+    teams: state.teams,
+    serverTime: (deps.now?.() ?? new Date()).toISOString(),
+    cases,
+    answered,
+    results: state.phase === 'resultados' ? calculateFinalResults(state, deps.now?.() ?? new Date()) : null,
+    seed,
+    crisisRate: state.crisisRate,
+    crisisVariant: state.crisisVariant,
+    crisisMeasures: state.crisisMeasures,
+    crisisVotes: votos,
+    crisisOutcome: outcomeOf(state.crisisMeasures, votos, medidaAplicada),
+    /**
+     * Eventos de la ronda en curso. No se filtran los ya aplicados: el chip del subsidio
+     * tiene que seguir viendose despues de pagarse (el historial solo dice que ya se cobro).
+     * El sorteo no se repite entre rondas porque solo `decidir` tiene evento.
+     */
+    activeEvents: markApplied(
+      drawEvents(
+        seed,
+        state.phase,
+        teams.map((t) => ({ id: t.id, caseId: t.case_id })),
+        usedEventKeys(todas).filter(() => state.phase !== 'decidir'),
+      ),
+      todas.map((d) => d.choice),
+    ),
+    assignedScenarios,
   };
 }
 
@@ -103,32 +264,6 @@ async function loadGame(deps: ServiceDeps, gameId: string): Promise<{ game: Game
   if (!game) throw new ApiError(404, 'not_found', `No existe la partida ${gameId}`);
   const teams = await deps.repo.listTeams(gameId);
   return { game, teams };
-}
-
-/** Estado completo: el cliente lo pide al montar y cada vez que Realtime avisa un cambio. */
-export async function getGameState(deps: ServiceDeps, gameId: string): Promise<GameStateResponse> {
-  const { game, teams } = await loadGame(deps, gameId);
-  const state = toGameState(game, teams);
-
-  const cases: Record<string, CaseView> = {};
-  const answered: Record<string, string[]> = {};
-  for (const row of teams) {
-    cases[row.id] = caseView(row.case_id);
-    const decisions = await deps.repo.listDecisions(row.id);
-    answered[row.id] = [...new Set(decisions.map((d) => scenarioKeyOfOption(d.choice) ?? d.choice))];
-  }
-
-  return {
-    gameId: game.id,
-    phase: state.phase,
-    timerEndsAt: state.timerEndsAt,
-    crisisTriggered: state.crisisTriggered,
-    teams: state.teams,
-    serverTime: (deps.now?.() ?? new Date()).toISOString(),
-    cases,
-    answered,
-    results: state.phase === 'resultados' ? calculateFinalResults(state, deps.now?.() ?? new Date()) : null,
-  };
 }
 
 /**
@@ -338,21 +473,22 @@ export function verifyHost(deps: ServiceDeps, token: string | null): HostVerifyR
  * aplica `applyDecision` y persiste equipo + historial. Ningun calculo en el cliente.
  */
 /**
- * Ajustes que dependen del caso y de lo ya jugado por ese equipo:
+ * Ajustes que dependen del caso, del sorteo de la partida y de lo ya jugado por ese equipo:
  *
- *  - **peso de eficiencia**: los casos no juegan el mismo número de situaciones de Ronda 2
- *    (6 con los 8 aparatos, 3 con 4). Cada situación reparte `6 / jugables` para que la
- *    oportunidad de ganar o perder eficiencia sea la misma para todos.
+ *  - **peso de eficiencia**: esta ronda el equipo juega 3 o 4 situaciones sorteadas (plan
+ *    1.1), asi que cada una reparte `24 / (4 x n)`. Todos ganan o pierden lo mismo, jueguen
+ *    las que jueguen.
  *  - **descuento del ahorro de la Ronda 1**: el efecto de Ronda 2 se calcula contra la
  *    referencia del aparato, así que se resta lo que el equipo ya ganó arreglándolo en la
  *    auditoría. Sin esto, arreglar el aire y luego ponerlo a 18 °C salía gratis.
  */
 function contextoDeDecision(
-  caseId: string,
+  seed: number,
+  teamRow: TeamRow,
   scenario: DecisionScenario,
   previous: Array<Pick<DecisionRow, 'round' | 'choice'>>,
 ): OpcionesDeAplicacion {
-  const caso = CASE_BY_ID[caseId];
+  const caso = CASE_BY_ID[teamRow.case_id];
   if (!caso || scenario.round !== 'decidir') return {};
   const descuento = (scenario.requires ?? []).reduce(
     (acc, aparato) => {
@@ -365,7 +501,23 @@ function contextoDeDecision(
     },
     { electricidad: 0, gas: 0 } as { electricidad?: number; gas?: number },
   );
-  return { pesoEficiencia: pesoEficienciaR2(caso.appliances), descontarAhorro: descuento };
+  return {
+    pesoEficiencia: pesoForTeam(seed, teamRow.case_id),
+    descontarAhorro: descuento,
+  };
+}
+
+/** Eventos vigentes de la ronda para el aula, con su estado de cobro por equipo. */
+function eventosDeLaRonda(
+  seed: number,
+  phase: Phase,
+  teams: readonly TeamRow[],
+): GameEventInstance[] {
+  return drawEvents(
+    seed,
+    phase,
+    teams.map((t) => ({ id: t.id, caseId: t.case_id })),
+  );
 }
 
 export async function submitDecision(
@@ -413,6 +565,29 @@ export async function submitDecision(
     throw new ApiError(400, 'bad_request', `La opcion ${body.optionId} no pertenece a ${scenario.id}`);
   }
 
+  const seed = seedOf(deps, gameId);
+
+  // Plan 1.1: en la Ronda 2 cada equipo solo responde a las situaciones que le sortearon.
+  const sorteadas = drawnScenarioIdsForCase(seed, teamRow.case_id);
+  if (scenario.round === 'decidir' && !sorteadas.includes(scenario.id)) {
+    throw new ApiError(
+      409,
+      'wrong_scenario',
+      `Esta ronda no le tocó "${scenario.title}": el sorteo repartió ${sorteadas.length} situaciones y esa no es una de ellas.`,
+    );
+  }
+
+  // Plan 2.2: un apagón parcial deja un aparato fuera de juego durante la ronda.
+  const eventos = eventosDeLaRonda(seed, game.phase, teams);
+  const bloqueado = lockedApplianceFor(eventos, scenario);
+  if (bloqueado) {
+    throw new ApiError(
+      409,
+      'locked_appliance',
+      `El apagón parcial dejó fuera ${APPLIANCE_BY_ID[bloqueado]?.name ?? bloqueado}: en esta ronda no se puede intervenir.`,
+    );
+  }
+
   const scenarioKey = scenarioKeyOfOption(body.optionId);
   const previous = await deps.repo.listDecisions(teamRow.id);
   if (previous.some((d) => d.choice === body.optionId || scenarioKeyOfOption(d.choice) === scenarioKey)) {
@@ -420,7 +595,15 @@ export async function submitDecision(
   }
 
   const before = toTeamState(teamRow);
-  const after = applyDecision(before, option, contextoDeDecision(teamRow.case_id, scenario, previous));
+  let after = applyDecision(before, option, contextoDeDecision(seed, teamRow, scenario, previous));
+
+  // Falla de aparato: la fuga se paga en la decision que toca ese aparato y solo una vez.
+  const conEstadoDeEventos = markApplied(
+    eventos,
+    previous.map((d) => d.choice),
+  );
+  const falla = eventEffectForDecision(conEstadoDeEventos, scenario);
+  if (falla) after = applyEventEffect(after, falla.effect);
 
   await deps.repo.updateTeam(teamRow.id, {
     electricidad: after.electricidad,
@@ -438,13 +621,38 @@ export async function submitDecision(
   };
   await deps.repo.logDecision(log);
 
+  const eventosCobrados: GameEventInstance[] = [];
+  if (falla) {
+    await deps.repo.logDecision({
+      teamId: teamRow.id,
+      round: 'event',
+      choice: eventLogKey(falla.event),
+      effect: falla.effect,
+    });
+    eventosCobrados.push({ ...falla.event, applied: true });
+  }
+
   const state = await getGameState(deps, gameId);
+  const feedback = eventosCobrados.length
+    ? `${describeEffect(option.effect)} ${eventosCobrados[0].title}: ${eventosCobrados[0].description}`
+    : describeEffect(option.effect);
   return {
-    feedback: describeEffect(option.effect),
-    effect: option.effect,
+    feedback,
+    effect: falla ? { ...option.effect, ...sumarEfectos(option.effect, falla.effect) } : option.effect,
     team: after,
     scenarioKey,
+    events: eventosCobrados,
     state,
+  };
+}
+
+/** Suma dos efectos (el de la decision y el que le agrega un evento) para el feedback. */
+function sumarEfectos(a: DecisionEffect, b: DecisionEffect): DecisionEffect {
+  return {
+    electricidad: (a.electricidad ?? 0) + (b.electricidad ?? 0),
+    gas: (a.gas ?? 0) + (b.gas ?? 0),
+    presupuesto: (a.presupuesto ?? 0) + (b.presupuesto ?? 0),
+    eficiencia: (a.eficiencia ?? 0) + (b.eficiencia ?? 0),
   };
 }
 
@@ -470,7 +678,8 @@ export async function fireCrisis(
   }
 
   const now = deps.now?.() ?? new Date();
-  const state = toGameState(game, teams);
+  const seed = seedOf(deps, gameId);
+  const state = toGameState(game, teams, seed);
   const after = triggerCrisis(state);
   const surcharges: Record<string, number> = {};
 
@@ -505,6 +714,176 @@ export async function fireCrisis(
   return { surcharges, state: await getGameState(deps, gameId) };
 }
 
+/* ------------------------------------------------------------------ */
+/* Aleatoriedad de la partida: eventos y votacion colectiva            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Liquida los eventos que se cobran al abrir la ronda (hoy el subsidio sorpresa, que le
+ * llega a todos los equipos). Idempotente: si el historial ya tiene la fila del evento, no
+ * se vuelve a abonar nada (el host puede reabrir la fase sin miedo).
+ */
+async function settleImmediateEvents(
+  deps: ServiceDeps,
+  game: GameRow,
+  state: GameState,
+  teams: readonly TeamRow[],
+): Promise<GameState> {
+  const seed = seedOf(deps, game.id);
+  const eventos = drawEvents(
+    seed,
+    'decidir',
+    teams.map((t) => ({ id: t.id, caseId: t.case_id })),
+  );
+  const subsidio = eventos.find((e) => e.kind === 'subsidy');
+  if (!subsidio) return state;
+
+  const historial = await choicesByTeam(deps, teams);
+  const yaCobrado = teams.some((t) => isEventApplied(subsidio, historial[t.id].map((d) => d.choice)));
+  if (yaCobrado) return state;
+
+  const equipos: TeamState[] = [];
+  for (const team of state.teams) {
+    const despues = applyEventEffect(team, subsidio.effect);
+    await deps.repo.updateTeam(team.id, { presupuesto: despues.presupuesto });
+    await deps.repo.logDecision({
+      teamId: team.id,
+      round: 'event',
+      choice: eventLogKey(subsidio),
+      effect: subsidio.effect,
+    });
+    equipos.push(despues);
+  }
+  return { ...state, teams: equipos };
+}
+
+/** Medida ya aplicada a la partida, leida del historial (`crisis:medida:<id>`). */
+async function settledMeasureId(
+  deps: ServiceDeps,
+  teams: readonly TeamRow[],
+): Promise<string | null> {
+  for (const team of teams) {
+    const historial = await deps.repo.listDecisions(team.id);
+    const fila = historial.find((d) => d.choice.startsWith('crisis:medida:'));
+    if (fila) return fila.choice.slice('crisis:medida:'.length);
+  }
+  return null;
+}
+
+/**
+ * Resuelve la votacion (mayoria simple, empate -> la medida mas severa) y aplica la medida
+ * ganadora a TODOS los equipos, dejando el delta real de cada uno en su historial.
+ * Idempotente: si ya hay una medida aplicada, no cobra dos veces.
+ */
+async function settleCrisisVote(
+  deps: ServiceDeps,
+  game: GameRow,
+  state: GameState,
+  teams: readonly TeamRow[],
+): Promise<GameState> {
+  const seed = seedOf(deps, game.id);
+  const historial = await choicesByTeam(deps, teams);
+  const votos = crisisVotesOf(teams, historial);
+  const yaResuelta = await settledMeasureId(deps, teams);
+
+  const { state: resuelto, outcome, deltas } = resolveCrisisVote(
+    { ...state, seed, crisisVotes: votos, crisisResolvedMeasureId: yaResuelta },
+    votos,
+  );
+  if (!outcome) return { ...state, crisisVotes: votos, crisisResolvedMeasureId: yaResuelta };
+
+  for (const team of resuelto.teams) {
+    const delta = deltas[team.id] ?? {};
+    await deps.repo.updateTeam(team.id, {
+      electricidad: team.electricidad,
+      gas: team.gas,
+      presupuesto: team.presupuesto,
+      eficiencia: team.eficiencia,
+      puntos: team.puntos,
+    });
+    await deps.repo.logDecision({
+      teamId: team.id,
+      round: 'crisis',
+      choice: `crisis:medida:${outcome.measureId}`,
+      effect: delta,
+    });
+  }
+
+  return resuelto;
+}
+
+/**
+ * Voto de un equipo en la sub-fase `crisis_votacion` (plan 3.3).
+ *
+ * Reglas: solo durante la ventana de votacion, una sola vez por equipo, y solo entre las
+ * medidas de la papeleta de esta partida. Cuando vota el ultimo equipo, la votacion se
+ * cierra sola: se aplica la medida ganadora y la partida pasa a `decidir_2` (el host puede
+ * cerrarla antes avanzando de fase, y entonces decide el recuento parcial).
+ */
+export async function submitCrisisVote(
+  deps: ServiceDeps,
+  gameId: string,
+  body: CrisisVoteRequest,
+): Promise<CrisisVoteResponse> {
+  const { game, teams } = await loadGame(deps, gameId);
+
+  if (typeof body?.teamId !== 'string' || typeof body?.measureId !== 'string') {
+    throw new ApiError(400, 'bad_request', 'Se espera {teamId, measureId}');
+  }
+  if (game.phase !== 'crisis_votacion') {
+    throw new ApiError(
+      409,
+      'wrong_phase',
+      `La votación del aula no está abierta (fase actual: ${game.phase}).`,
+    );
+  }
+
+  const teamRow = teams.find((t) => t.id === body.teamId);
+  if (!teamRow) throw new ApiError(404, 'not_found', `El equipo ${body.teamId} no pertenece a esta partida`);
+
+  const seed = seedOf(deps, gameId);
+  const papeleta = crisisMeasuresFor(seed);
+  if (!papeleta.some((m) => m.id === body.measureId)) {
+    throw new ApiError(400, 'bad_request', `"${body.measureId}" no está en la papeleta de esta partida.`);
+  }
+
+  const previous = await deps.repo.listDecisions(teamRow.id);
+  if (previous.some((d) => d.choice.startsWith('vote:'))) {
+    throw new ApiError(409, 'already_decided', 'Tu equipo ya votó: cada mesa vota una sola vez.');
+  }
+
+  const now = deps.now?.() ?? new Date();
+  const vote: CrisisVote = { teamId: teamRow.id, measureId: body.measureId, votedAt: now.toISOString() };
+  await deps.repo.logDecision({
+    teamId: teamRow.id,
+    round: 'crisis_vote',
+    choice: `vote:${body.measureId}`,
+    effect: {},
+  });
+
+  // ¿Era el ultimo voto posible? Entonces la ventana se cierra sola.
+  const historial = await choicesByTeam(deps, teams);
+  const votos = crisisVotesOf(teams, historial);
+  let outcome: CrisisOutcome | null = null;
+  let closed = false;
+
+  if (votos.length >= teams.length && teams.length > 0) {
+    const base = toGameState(game, teams, seed);
+    const resuelto = await settleCrisisVote(deps, game, base, teams);
+    if (resuelto.crisisResolvedMeasureId) {
+      const advanced = advancePhase(base, 'decidir_2', now);
+      await deps.repo.updateGame(gameId, {
+        phase: advanced.phase,
+        timer_ends_at: advanced.timerEndsAt,
+      });
+      closed = true;
+      outcome = (await getGameState(deps, gameId)).crisisOutcome;
+    }
+  }
+
+  return { vote, outcome, closed, state: await getGameState(deps, gameId) };
+}
+
 /**
  * Avanza la maquina de fases. Solo el host.
  * Entrar en `crisis` dispara el evento sorpresa (mismo efecto que POST /crisis, sin cobrar dos veces).
@@ -530,7 +909,13 @@ export async function changePhase(
   }
 
   const now = deps.now?.() ?? new Date();
-  let state = toGameState(game, teams);
+  const seed = seedOf(deps, gameId);
+  let state = toGameState(game, teams, seed);
+
+  // Entrar en `decidir` liquida el evento que le llega al aula entera (subsidio sorpresa).
+  if (next === 'decidir') {
+    state = await settleImmediateEvents(deps, game, state, teams);
+  }
 
   if (next === 'crisis' && !state.crisisTriggered) {
     const conCrisis = triggerCrisis(state);
@@ -545,6 +930,11 @@ export async function changePhase(
       });
     }
     state = conCrisis;
+  }
+
+  // Cerrar la votación: la medida ganadora se aplica a TODOS antes de las últimas decisiones.
+  if (next === 'decidir_2' && state.phase === 'crisis_votacion') {
+    state = await settleCrisisVote(deps, game, state, teams);
   }
 
   const advanced = advancePhase(state, next, now);

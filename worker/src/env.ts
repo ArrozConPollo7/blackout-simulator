@@ -21,6 +21,12 @@ export interface Env {
   ALLOW_INSECURE_HOST?: string;
   /** Origenes permitidos separados por coma. Por defecto "*". */
   ALLOWED_ORIGINS?: string;
+  /**
+   * Semilla fija de las partidas (plan 2.1). Sin ella, cada partida saca su semilla de su
+   * propio id. Fijandola, dos partidas repiten el mismo guion: util para ensayar una clase
+   * o para reproducir un caso durante una auditoria.
+   */
+  GAME_SEED?: string;
 }
 
 export interface WorkerConfig {
@@ -30,6 +36,8 @@ export interface WorkerConfig {
   hostPasscode: string;
   allowInsecureHost: boolean;
   allowedOrigins: string[];
+  /** Semilla fija de las partidas, o null si cada partida sortea la suya del id. */
+  gameSeed: number | null;
 }
 
 /**
@@ -56,6 +64,8 @@ export function readConfig(env: Env): WorkerConfig {
   }
   const hostToken = (env.HOST_TOKEN ?? '').trim();
   const hostPasscode = (env.HOST_PASSCODE ?? '').trim() || DEFAULT_HOST_PASSCODE;
+  const rawSeed = (env.GAME_SEED ?? '').trim();
+  const gameSeed = rawSeed.length > 0 && Number.isFinite(Number(rawSeed)) ? Number(rawSeed) >>> 0 : null;
   return {
     supabaseUrl,
     supabaseKey,
@@ -66,5 +76,6 @@ export function readConfig(env: Env): WorkerConfig {
       .split(',')
       .map((o) => o.trim())
       .filter((o) => o.length > 0),
+    gameSeed,
   };
 }

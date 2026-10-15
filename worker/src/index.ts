@@ -7,6 +7,8 @@
  *   GET  /game/:id/state       estado completo (reconexion)
  *   POST /game/:id/decision    {teamId, round, optionId} -> aplica applyDecision
  *   POST /game/:id/crisis      solo host: triggerCrisis + apertura de la fase de crisis
+ *   POST /game/:id/crisis-vote {teamId, measureId} -> voto de la mesa en la votacion del aula
+ *                              (la medida ganadora se aplica a TODOS los equipos)
  *   POST /game/:id/phase       solo host: avanza lobby -> investigar -> ... -> resultados
  *   POST /game/:id/teams       solo host: añade un equipo con la partida ya empezada
  *   POST /host/verify          sondeo de la contraseña del Host (cabecera x-host-token)
@@ -16,7 +18,12 @@
  */
 
 import type { Phase } from '../../types/game.ts';
-import type { DecisionRequest, JoinGameRequest, StartGameRequest } from '../../types/api.ts';
+import type {
+  CrisisVoteRequest,
+  DecisionRequest,
+  JoinGameRequest,
+  StartGameRequest,
+} from '../../types/api.ts';
 import { ConfigError, readConfig, type Env } from './env.ts';
 import { SupabaseRepo, type GameRepo } from './repo.ts';
 import {
@@ -26,6 +33,7 @@ import {
   hostAddTeam,
   joinGame,
   startGame,
+  submitCrisisVote,
   submitDecision,
   verifyHost,
   type ServiceDeps,
@@ -40,6 +48,7 @@ export function buildDeps(env: Env, repo?: GameRepo): ServiceDeps {
       hostToken: env.HOST_TOKEN ?? null,
       hostPasscode: env.HOST_PASSCODE ?? undefined,
       allowInsecureHost: env.ALLOW_INSECURE_HOST === 'true',
+      seed: env.GAME_SEED ? Number(env.GAME_SEED) >>> 0 : null,
     };
   }
   const config = readConfig(env);
@@ -48,6 +57,7 @@ export function buildDeps(env: Env, repo?: GameRepo): ServiceDeps {
     hostToken: config.hostToken,
     hostPasscode: config.hostPasscode,
     allowInsecureHost: config.allowInsecureHost,
+    seed: config.gameSeed,
   };
 }
 
@@ -76,7 +86,7 @@ export async function handleRequest(request: Request, env: Env, repo?: GameRepo)
       return jsonResponse(verifyHost(deps, request.headers.get('x-host-token')), 200, cors);
     }
 
-    const match = path.match(/^\/game\/([^/]+)\/(state|decision|crisis|phase|join|teams)$/);
+    const match = path.match(/^\/game\/([^/]+)\/(state|decision|crisis|crisis-vote|phase|join|teams)$/);
     if (match) {
       const [, gameId, action] = match;
       const hostToken = request.headers.get('x-host-token');
@@ -98,6 +108,10 @@ export async function handleRequest(request: Request, env: Env, repo?: GameRepo)
       }
       if (action === 'crisis' && request.method === 'POST') {
         return jsonResponse(await fireCrisis(deps, gameId, hostToken), 200, cors);
+      }
+      if (action === 'crisis-vote' && request.method === 'POST') {
+        const body = await readJsonBody<CrisisVoteRequest>(request);
+        return jsonResponse(await submitCrisisVote(deps, gameId, body), 200, cors);
       }
       if (action === 'phase' && request.method === 'POST') {
         const body = await readJsonBody<{ phase?: Phase }>(request);

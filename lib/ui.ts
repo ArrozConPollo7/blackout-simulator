@@ -15,6 +15,9 @@ export function hostPhaseOf(phase: Phase | undefined): HostPhase {
     case 'lobby':
       return 'lobby';
     case 'crisis':
+    // La votación del aula (plan 3) sigue siendo crisis: el vecindario no vuelve a la calma
+    // hasta que la medida ganadora esté aplicada.
+    case 'crisis_votacion':
       return 'crisis';
     case 'resultados':
       return 'resultados';
@@ -45,7 +48,8 @@ const ETIQUETA_TRANSICION: Record<Phase, string> = {
   lobby: 'Iniciar investigación',
   investigar: 'Abrir decisiones',
   decidir: 'Abrir crisis',
-  crisis: 'Últimas decisiones',
+  crisis: 'Abrir la votación del aula',
+  crisis_votacion: 'Cerrar votación y decidir',
   decidir_2: 'Ver resultados',
   resultados: '',
 };

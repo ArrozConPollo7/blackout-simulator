@@ -39,9 +39,20 @@ export const PHASE_PLAN: PhasePlan[] = [
   {
     phase: 'crisis',
     code: 'FASE 4: CRISIS DE RED',
-    label: 'Crisis energética — tarifa +30%',
+    label: 'Crisis energética',
     timed: true,
     durationMs: 2 * MINUTE,
+  },
+  {
+    phase: 'crisis_votacion',
+    code: 'FASE 4b: VOTACIÓN DEL AULA',
+    label: 'El aula decide la medida de emergencia',
+    /**
+     * Ventana corta a proposito (plan 3.1.2): obliga a discutir en voz alta antes de tocar
+     * el boton, igual que la negociacion de 60 s del proyecto hermano.
+     */
+    timed: true,
+    durationMs: 45 * 1000,
   },
   {
     phase: 'decidir_2',

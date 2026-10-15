@@ -10,7 +10,10 @@
  *   2. la extremista termine con MAS presupuesto que la ganadora (ahorrar no basta),
  *   3. la derrochadora quede ultima en eficiencia y con la peor factura.
  *
- * Si se rebalancea `content/decisions.ts`, este test es la red que avisa.
+ * Plan 1.1 y 2.3: ahora cada equipo juega un subconjunto SORTEADO de situaciones y la crisis
+ * tiene intensidad variable, asi que las tres exigencias se comprueban en barrido
+ * (`SEMILLAS`): un solo camino feliz ya no demuestra nada. Si se rebalancea
+ * `content/decisions.ts`, este test es la red que avisa.
  */
 
 import { describe, it } from 'node:test';
@@ -20,16 +23,21 @@ import type { GameState, TeamState } from '../types/game.ts';
 import { CASE_CATALOG } from '../content/cases.ts';
 import {
   APPLIANCE_BY_ID,
-  ROUND2B_SCENARIOS,
   OPTIONS_BY_ID,
+  ROUND2B_SCENARIOS,
   pesoEficienciaR2,
-  scenariosForCase,
 } from '../content/decisions.ts';
+import { CRISIS_MEASURES, crisisRateFor, crisisVariantFor } from '../content/crisis.ts';
 import {
   advancePhase,
   applyDecision,
+  applyMeasure,
   calculateFinalResults,
+  drawnScenarios,
+  drawEvents,
+  eventEffectForDecision,
   initialTeamState,
+  markApplied,
   triggerCrisis,
 } from '../engine/index.ts';
 
@@ -41,14 +49,25 @@ const VARIANTE: Record<Estrategia, { r1: string; r2: 'a' | 'b' | 'c'; r2b: strin
   extremo: { r1: 'completa', r2: 'c', r2b: 'r2b:crisis-final:desconexion' },
 };
 
+/** Semillas del barrido: cubren muchos sorteos distintos de situaciones y de crisis. */
+const SEMILLAS = Array.from({ length: 120 }, (_, i) => i + 1);
+
 /** Juega una partida completa con una estrategia fija y devuelve el estado final. */
-function jugar(estrategia: Estrategia, caso = CASE_CATALOG[0]): GameState {
+function jugar(estrategia: Estrategia, caso = CASE_CATALOG[0], seed = 1): GameState {
   const v = VARIANTE[estrategia];
+  const teamId = `equipo-${caso.id}`; // solo para el evento (el sorteo va por caso)
   let state: GameState = {
     phase: 'lobby',
     timerEndsAt: new Date('2026-09-24T10:00:00.000Z').toISOString(),
     crisisTriggered: false,
-    teams: [initialTeamState({ id: caso.id, name: caso.name, color: '#3ECF8E' })],
+    teams: [initialTeamState({ id: teamId, name: caso.name, color: '#3ECF8E' })],
+    seed,
+    crisisRate: crisisRateFor(seed),
+    crisisVariant: crisisVariantFor(seed),
+    activeEvents: [],
+    crisisMeasures: [],
+    crisisVotes: [],
+    crisisResolvedMeasureId: null,
   };
 
   const apply = (
@@ -61,9 +80,10 @@ function jugar(estrategia: Estrategia, caso = CASE_CATALOG[0]): GameState {
     return applyDecision(team, option, ajustes);
   };
 
-  // Igual que el Worker: cada caso juega sus situaciones y cada una reparte el peso.
-  const situaciones = scenariosForCase('decidir', caso.appliances);
-  const peso = pesoEficienciaR2(caso.appliances);
+  // Igual que el Worker: solo las situaciones SORTEADAS para ese equipo, y el peso se reparte
+  // entre las que le tocaron (no entre todas las jugables).
+  const situaciones = drawnScenarios(seed, caso.id);
+  const peso = pesoEficienciaR2(situaciones.length);
   const ahorroR1 = (team: TeamState, aparatos: string[]): { electricidad: number; gas: number } =>
     aparatos.reduce<{ electricidad: number; gas: number }>(
       (acc, aparato) => {
@@ -85,26 +105,34 @@ function jugar(estrategia: Estrategia, caso = CASE_CATALOG[0]): GameState {
     ),
   };
 
-  // Ronda 2 — decidir: solo las situaciones de los aparatos del caso, con su peso y
-  // descontando el ahorro que ya se capturo en la Ronda 1 sobre esos mismos aparatos.
+  // Ronda 2 — decidir: las situaciones del sorteo, con su peso y descontando el ahorro que ya
+  // se capturo en la Ronda 1 sobre esos mismos aparatos, mas el evento aleatorio del aula.
   state = advancePhase(state, 'decidir');
-  assert.ok(situaciones.length > 0 && situaciones.length <= 6, `situaciones de ${caso.id}: ${situaciones.length}`);
+  assert.ok(situaciones.length >= 3 && situaciones.length <= 4, `${caso.id}: ${situaciones.length} situaciones`);
+  const eventos = markApplied(
+    drawEvents(seed, 'decidir', [{ id: teamId, caseId: caso.id }]),
+    state.teams.flatMap((t) => [] as string[]),
+  );
   state = {
     ...state,
+    activeEvents: eventos,
     teams: state.teams.map((t) =>
-      situaciones.reduce(
-        (acc, s) =>
-          apply(acc, `r2:${s.id}:${v.r2}`, {
-            pesoEficiencia: peso,
-            descontarAhorro: ahorroR1(acc, s.requires ?? []),
-          }),
-        t,
-      ),
+      situaciones.reduce((acc, s) => {
+        const siguiente = apply(acc, `r2:${s.id}:${v.r2}`, {
+          pesoEficiencia: peso,
+          descontarAhorro: ahorroR1(acc, s.requires ?? []),
+        });
+        const falla = eventEffectForDecision(eventos, s);
+        return falla
+          ? applyDecision(siguiente, { id: 'evento', label: 'evento', effect: falla.effect })
+          : siguiente;
+      }, t),
     ),
   };
 
-  // Evento sorpresa + ultimas decisiones.
+  // Evento sorpresa + votacion del aula + ultimas decisiones.
   state = advancePhase(triggerCrisis(state), 'crisis');
+  state = advancePhase(state, 'crisis_votacion');
   state = advancePhase(state, 'decidir_2');
   assert.equal(ROUND2B_SCENARIOS.length, 1);
   state = {
@@ -113,6 +141,26 @@ function jugar(estrategia: Estrategia, caso = CASE_CATALOG[0]): GameState {
   };
 
   return advancePhase(state, 'resultados');
+}
+
+/** Las tres estrategias jugadas con la misma semilla y el mismo caso. */
+function triada(seed: number, caso = CASE_CATALOG[0]) {
+  return {
+    derroche: jugar('derroche', caso, seed).teams[0],
+    equilibrado: jugar('equilibrado', caso, seed).teams[0],
+    extremo: jugar('extremo', caso, seed).teams[0],
+  };
+}
+
+function ordenDe(equipos: Record<Estrategia, TeamState>): Array<Estrategia | undefined> {
+  const ranking = calculateFinalResults({
+    ...jugar('equilibrado'),
+    teams: [equipos.derroche, equipos.equilibrado, equipos.extremo],
+  }).ranking;
+  const nombrePorEquipo = new Map(
+    (Object.keys(equipos) as Estrategia[]).map((e) => [equipos[e], e] as const),
+  );
+  return ranking.map((r) => nombrePorEquipo.get(r.team));
 }
 
 describe('balanceo de la partida', () => {
@@ -131,17 +179,78 @@ describe('balanceo de la partida', () => {
       teams: [equipos.derroche, equipos.equilibrado, equipos.extremo],
     }).ranking;
 
-    const nombrePorEquipo = new Map(
-      (Object.keys(equipos) as Estrategia[]).map((e) => [equipos[e], e] as const),
-    );
-    const orden = ranking.map((r) => nombrePorEquipo.get(r.team));
-
-    assert.deepEqual(orden, ['equilibrado', 'extremo', 'derroche']);
+    assert.deepEqual(ordenDe(equipos), ['equilibrado', 'extremo', 'derroche']);
     assert.equal(ranking[0].rank, 1);
     assert.ok(
       ranking.every((r, i) => i === 0 || ranking[i - 1].puntos >= r.puntos),
       'el ranking debe venir ordenado por puntaje (eficiencia + consumo + economía)',
     );
+  });
+
+  it('la tesis se sostiene en barrido: 120 semillas, cada una con su sorteo y su crisis', () => {
+    for (const seed of SEMILLAS) {
+      const equipos = triada(seed);
+      assert.deepEqual(
+        ordenDe(equipos),
+        ['equilibrado', 'extremo', 'derroche'],
+        `semilla ${seed}: se rompio el orden del ranking`,
+      );
+      assert.ok(
+        equipos.extremo.presupuesto > equipos.equilibrado.presupuesto,
+        `semilla ${seed}: la extremista no ahorro mas dinero que la ganadora`,
+      );
+      assert.ok(
+        equipos.extremo.electricidad <= equipos.equilibrado.electricidad,
+        `semilla ${seed}: la extremista consumio mas electricidad`,
+      );
+      assert.ok(
+        equipos.extremo.gas <= equipos.equilibrado.gas,
+        `semilla ${seed}: la extremista consumio mas gas`,
+      );
+      // Con un reparto solo de gas (posible desde el sorteo), los dos consumos electricos
+      // EMPATAN: la ventaja de la extremista se ve en el dinero y en el gas, y aun asi pierde.
+      assert.ok(equipos.equilibrado.eficiencia > equipos.derroche.eficiencia, `semilla ${seed}`);
+      assert.ok(equipos.derroche.electricidad > equipos.equilibrado.electricidad, `semilla ${seed}`);
+      assert.ok(equipos.equilibrado.eficiencia >= 70 && equipos.equilibrado.eficiencia <= 95, `semilla ${seed}: ${equipos.equilibrado.eficiencia}`);
+      assert.ok(equipos.derroche.eficiencia < 40, `semilla ${seed}: derroche=${equipos.derroche.eficiencia}`);
+      for (const t of Object.values(equipos)) {
+        assert.ok(t.presupuesto > 0, `semilla ${seed}: un equipo termina en deuda`);
+        assert.ok(t.electricidad > 0 && t.electricidad <= 220, `semilla ${seed}`);
+        assert.ok(t.gas >= 0 && t.gas <= 220, `semilla ${seed}`);
+      }
+    }
+  });
+
+  it('cada caso del catalogo es jugable con la estrategia equilibrada, en cualquier semilla', () => {
+    for (const caso of CASE_CATALOG) {
+      for (const seed of SEMILLAS.slice(0, 24)) {
+        const final = jugar('equilibrado', caso, seed);
+        const t = final.teams[0];
+        assert.equal(final.phase, 'resultados');
+        assert.ok(t.presupuesto > 0, `${caso.id} (semilla ${seed}) termina en deuda`);
+        assert.ok(t.eficiencia >= 70, `${caso.id} (semilla ${seed}) eficiencia=${t.eficiencia}`);
+        assert.ok(
+          caso.appliances.every((app) => APPLIANCE_BY_ID[app]),
+          `${caso.id} con aparato desconocido`,
+        );
+      }
+    }
+  });
+
+  it('la medida que vote el aula no da la vuelta al ranking de las estrategias', () => {
+    for (const medida of CRISIS_MEASURES) {
+      const equipos = triada(5);
+      const { teams } = applyMeasure(
+        [equipos.derroche, equipos.equilibrado, equipos.extremo],
+        medida.effect,
+      );
+      const [derroche, equilibrado, extremo] = teams;
+      assert.deepEqual(
+        ordenDe({ derroche, equilibrado, extremo }),
+        ['equilibrado', 'extremo', 'derroche'],
+        `la medida "${medida.id}" desordena el ranking`,
+      );
+    }
   });
 
   it('a igual eficiencia, gana quien consumió menos (el consumo sí puntúa)', () => {
@@ -158,8 +267,6 @@ describe('balanceo de la partida', () => {
 
   it('ni consumir menos ni gastar menos dan la vuelta a una diferencia grande de eficiencia', () => {
     const base = initialTeamState({ id: 'x', name: 'x', color: '#000' });
-    // La extremista consume 27 kWh y 35 m³ menos y tiene $25.000 más, pero 30 puntos menos
-    // de eficiencia: el mensaje del juego ("no gana quien menos consume a secas") se sostiene.
     const extremo = { ...base, id: 'e', eficiencia: 45, electricidad: 35, gas: 20, presupuesto: 95000 };
     const equilibrado = { ...base, id: 'q', eficiencia: 75, electricidad: 62, gas: 55, presupuesto: 70000 };
     const ranking = calculateFinalResults({
@@ -180,14 +287,6 @@ describe('balanceo de la partida', () => {
     );
   });
 
-  it('la derrochadora termina ultima en eficiencia y con la peor factura', () => {
-    const derroche = kpi('derroche');
-    const equilibrado = kpi('equilibrado');
-    assert.ok(equilibrado.eficiencia > derroche.eficiencia);
-    assert.ok(equilibrado.presupuesto > derroche.presupuesto);
-    assert.ok(derroche.electricidad > equilibrado.electricidad);
-  });
-
   it('las eficiencias finales caen en rangos jugables (documento: 78% como referencia)', () => {
     assert.ok(kpi('derroche').eficiencia < 40, `derroche=${kpi('derroche').eficiencia}`);
     assert.ok(kpi('extremo').eficiencia > kpi('derroche').eficiencia);
@@ -196,21 +295,13 @@ describe('balanceo de la partida', () => {
     assert.ok(kpi('equilibrado').eficiencia <= 95);
   });
 
-  it('ninguna estrategia queda con presupuesto negativo ni con consumo por encima de los limites', () => {
-    for (const estrategia of Object.keys(finales) as Estrategia[]) {
-      const t = kpi(estrategia);
-      assert.ok(t.presupuesto > 0, `${estrategia} en deuda`);
-      assert.ok(t.electricidad > 0 && t.electricidad <= 220, `${estrategia} electricidad=${t.electricidad}`);
-      assert.ok(t.gas >= 0 && t.gas <= 220);
-    }
-  });
-
   it('la crisis castiga mas a quien mas consumio cuando el consumo de partida es igual', () => {
     const base = initialTeamState({ id: 'x', name: 'x', color: '#000' });
     const eficiente = triggerCrisis({
+      ...finales.equilibrado,
       phase: 'crisis',
-      timerEndsAt: new Date().toISOString(),
       crisisTriggered: false,
+      crisisVariant: { id: 'solo-electricidad', label: 'solo luz', gasSurchargeRate: 0 },
       teams: [{ ...base, id: 'e', electricidad: 70 }, { ...base, id: 'd', electricidad: 105 }],
     });
     const [e, d] = eficiente.teams;
@@ -219,21 +310,5 @@ describe('balanceo de la partida', () => {
       (base.presupuesto - d.presupuesto) / (base.presupuesto - e.presupuesto),
       105 / 70,
     );
-  });
-
-  it('cada caso del catalogo es jugable con la estrategia equilibrada', () => {
-    for (const caso of CASE_CATALOG) {
-      const final = jugar('equilibrado', caso);
-      const t = final.teams[0];
-      assert.equal(final.phase, 'resultados');
-      assert.ok(t.presupuesto > 0, `${caso.id} termina en deuda`);
-      // Todos los casos alcanzan la misma eficiencia con la misma estrategia: el peso de cada
-      // situacion compensa que unos jueguen 3 y otros 6 (antes solo podian ganar los de 8 aparatos).
-      assert.ok(t.eficiencia >= 70, `${caso.id} eficiencia=${t.eficiencia}`);
-      assert.ok(
-        caso.appliances.every((app) => APPLIANCE_BY_ID[app]),
-        `${caso.id} con aparato desconocido`,
-      );
-    }
   });
 });

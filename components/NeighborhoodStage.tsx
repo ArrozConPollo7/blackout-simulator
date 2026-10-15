@@ -53,11 +53,26 @@ import StreetScene from './neighborhood/StreetScene';
 
 export interface NeighborhoodStageProps {
   teams: TeamState[];
+  /** @deprecated usa `crisisMode`: se mantiene para no romper llamadas antiguas. */
   isCrisis?: boolean;
+  /**
+   * Plan 4.1: 'calma' (todo nominal), 'crisis' (tarifa ya aplicada) o 'votacion' (el aula
+   * discute la medida). La votación no es una crisis distinta: es la misma con más nervio.
+   */
+  crisisMode?: 'calma' | 'crisis' | 'votacion';
+  /** Sube 1 cada vez que se revela la medida ganadora: lanza la ola de luz del vecindario. */
+  revealSignal?: number;
   selectedTeamId?: string | null;
   onSelectTeam?: (teamId: string) => void;
   className?: string;
 }
+
+/** Tensión visual de cada modo: 0 nominal, 1 crisis aplicada, 0,6 votación en curso. */
+const TENSION: Record<'calma' | 'crisis' | 'votacion', number> = {
+  calma: 0,
+  crisis: 1,
+  votacion: 0.6,
+};
 
 /* Colores de ambiente (Design.md) */
 const AMBIENTE_OK = { cielo: '#7C97C4', suelo: '#141A22', niebla: '#0A0E17' };
@@ -70,35 +85,69 @@ const scratchColor = new THREE.Color();
  * Ambiente: hemisferio + ambiente + niebla (todos los valores se interpolan)
  * -------------------------------------------------------------------------- */
 
-function Ambience({ isCrisis, fogRef }: { isCrisis: boolean; fogRef: React.RefObject<THREE.Fog> }) {
+/**
+ * Ambiente: hemisferio + ambiente + niebla (todos los valores se interpolan).
+ *
+ * Plan 4.1: la TENSION (0-1) entra como numero en vez de booleano, para distinguir la crisis
+ * ya aplicada (1) de la votacion del aula (0,6: mismo tono, parpadeo mas erratico). El
+ * revelado de la medida ganadora sube `revealSignal` y lanza una ola de luz de un solo golpe.
+ */
+function Ambience({
+  tension,
+  revealSignal,
+  fogRef,
+}: {
+  tension: number;
+  revealSignal: number;
+  fogRef: React.RefObject<THREE.Fog>;
+}) {
   const hemiRef = useRef<THREE.HemisphereLight>(null);
   const ambientRef = useRef<THREE.AmbientLight>(null);
   const flashRef = useRef(0);
-  const previous = useRef(isCrisis);
+  const waveRef = useRef(0);
+  const previous = useRef(tension);
+  const senal = useRef(revealSignal);
 
   useFrame((state, delta) => {
     const t = expDamp(delta, 1.6);
-    if (previous.current !== isCrisis) {
-      previous.current = isCrisis;
+    if (previous.current !== tension) {
+      previous.current = tension;
       // Chispa simultánea de todo el vecindario al entrar en crisis.
-      if (isCrisis) flashRef.current = 1;
+      if (tension > 0) flashRef.current = 1;
+    }
+    if (senal.current !== revealSignal) {
+      // Revelado de la medida del aula: ola de luz que barre el vecindario una sola vez.
+      senal.current = revealSignal;
+      waveRef.current = 1;
+      flashRef.current = 1;
     }
     flashRef.current = Math.max(0, flashRef.current - delta * 2.4);
+    waveRef.current = Math.max(0, waveRef.current - delta * 0.9);
 
-    const dest = isCrisis ? AMBIENTE_CRISIS : AMBIENTE_OK;
-    const chispa = flashRef.current * 0.7 + (isCrisis ? 0.04 * Math.sin(state.clock.elapsedTime * 9) : 0);
+    const enCrisis = tension > 0;
+    const dest = enCrisis ? AMBIENTE_CRISIS : AMBIENTE_OK;
+    // La votación añade un temblor lento y errático encima del parpadeo de la crisis.
+    const temblor = tension * (1 - tension) * 4 * 0.06 * Math.sin(state.clock.elapsedTime * 17.3);
+    const chispa =
+      flashRef.current * 0.7 +
+      waveRef.current * 0.85 +
+      (enCrisis ? 0.04 * Math.sin(state.clock.elapsedTime * (9 + tension * 6)) : 0) +
+      temblor;
 
     if (hemiRef.current) {
       hemiRef.current.color.lerp(scratchColor.set(dest.cielo), t);
       hemiRef.current.groundColor.lerp(scratchColor.set(dest.suelo), t);
-      hemiRef.current.intensity += ((isCrisis ? 0.42 : 0.5) + chispa - hemiRef.current.intensity) * t;
+      hemiRef.current.intensity += ((enCrisis ? 0.42 : 0.5) + chispa - hemiRef.current.intensity) * t;
     }
     if (ambientRef.current) {
-      ambientRef.current.intensity += ((isCrisis ? 0.24 : 0.16) + chispa - ambientRef.current.intensity) * t;
-      ambientRef.current.color.lerp(scratchColor.set(isCrisis ? '#FF8A5A' : '#CFD8E6'), t);
+      ambientRef.current.intensity += ((enCrisis ? 0.24 : 0.16) + chispa - ambientRef.current.intensity) * t;
+      ambientRef.current.color.lerp(
+        scratchColor.set(waveRef.current > 0.4 ? '#FFF3E0' : enCrisis ? '#FF8A5A' : '#CFD8E6'),
+        t,
+      );
     }
     if (fogRef.current) {
-      fogRef.current.color.lerp(scratchColor.set(dest.niebla), t);
+      fogRef.current.color.lerp(scratchColor.set(waveRef.current > 0.4 ? '#3A2430' : dest.niebla), t);
     }
   });
 
@@ -190,7 +239,21 @@ function CameraRig({ layout, street, selectedTeamId, fogRef }: CameraRigProps) {
  * Escena
  * -------------------------------------------------------------------------- */
 
-function Scene({ teams, isCrisis, selectedTeamId, onSelectTeam }: Required<Omit<NeighborhoodStageProps, 'className'>>) {
+function Scene({
+  teams,
+  crisisMode,
+  revealSignal,
+  selectedTeamId,
+  onSelectTeam,
+}: {
+  teams: TeamState[];
+  crisisMode: 'calma' | 'crisis' | 'votacion';
+  revealSignal: number;
+  selectedTeamId: string | null;
+  onSelectTeam?: (teamId: string) => void;
+}) {
+  const tension = TENSION[crisisMode];
+  const isCrisis = tension > 0;
   const layout = useMemo(() => layoutNeighborhood(teams), [teams]);
   const street = useMemo(() => streetLayout(layout), [layout]);
   const fogRef = useRef<THREE.Fog>(null!);
@@ -222,7 +285,7 @@ function Scene({ teams, isCrisis, selectedTeamId, onSelectTeam }: Required<Omit<
   return (
     <>
       <fog ref={fogRef} attach="fog" args={[AMBIENTE_OK.niebla, 40, 170]} />
-      <Ambience isCrisis={isCrisis} fogRef={fogRef} />
+      <Ambience tension={tension} revealSignal={revealSignal} fogRef={fogRef} />
       {/* Única luz con sombras de toda la escena: 1 mapa de 1024, PCF suave. */}
       <directionalLight
         ref={lightRef}
@@ -234,7 +297,7 @@ function Scene({ teams, isCrisis, selectedTeamId, onSelectTeam }: Required<Omit<
         shadow-bias={-0.0006}
         shadow-normalBias={0.035}
       />
-      <StreetScene layout={layout} street={street} isCrisis={isCrisis} />
+      <StreetScene layout={layout} street={street} isCrisis={isCrisis} tension={tension} />
       {layout.placements.map((placement) => (
         <HouseModel
           key={placement.team.id}
@@ -246,7 +309,8 @@ function Scene({ teams, isCrisis, selectedTeamId, onSelectTeam }: Required<Omit<
           isLeader={placement.team.id === leaderId}
           isSelected={placement.team.id === selectedTeamId}
           isCrisis={isCrisis}
-          onSelect={onSelectTeam}
+          tension={tension}
+          onSelect={onSelectTeam ?? (() => undefined)}
         />
       ))}
       <CameraRig layout={layout} street={street} selectedTeamId={selectedTeamId} fogRef={fogRef} />
@@ -283,10 +347,15 @@ function LegendItem({
 export default function NeighborhoodStage({
   teams,
   isCrisis = false,
+  crisisMode,
+  revealSignal = 0,
   selectedTeamId = null,
   onSelectTeam,
   className = '',
 }: NeighborhoodStageProps) {
+  // Compatibilidad: sin `crisisMode` explícito, el booleano de siempre manda.
+  const modo: 'calma' | 'crisis' | 'votacion' = crisisMode ?? (isCrisis ? 'crisis' : 'calma');
+  const enCrisis = modo !== 'calma';
   const [webglOk, setWebglOk] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -337,9 +406,10 @@ export default function NeighborhoodStage({
         >
           <Scene
             teams={teams}
-            isCrisis={isCrisis}
+            crisisMode={modo}
+            revealSignal={revealSignal}
             selectedTeamId={selectedTeamId}
-            onSelectTeam={onSelectTeam ?? (() => undefined)}
+            onSelectTeam={onSelectTeam}
           />
         </Canvas>
       )}
@@ -350,17 +420,17 @@ export default function NeighborhoodStage({
       <div className="pointer-events-none absolute left-4 top-3 flex items-center gap-2">
         <span
           className={`material-symbols-outlined text-[16px] ${
-            isCrisis ? 'text-accent-crisis' : 'text-text-secondary'
+            enCrisis ? 'text-accent-crisis' : 'text-text-secondary'
           }`}
         >
-          {isCrisis ? 'warning' : 'visibility'}
+          {modo === 'votacion' ? 'how_to_vote' : enCrisis ? 'warning' : 'visibility'}
         </span>
         <span
           className={`font-label-sm text-label-sm uppercase tracking-widest ${
-            isCrisis ? 'text-accent-crisis animate-pulse' : 'text-text-secondary'
+            enCrisis ? 'text-accent-crisis animate-pulse' : 'text-text-secondary'
           }`}
         >
-          {isCrisis ? 'VECINDARIO EN CRISIS' : 'VECINDARIO EN TIEMPO REAL'}
+          {modo === 'votacion' ? 'EL AULA VOTA LA MEDIDA' : enCrisis ? 'VECINDARIO EN CRISIS' : 'VECINDARIO EN TIEMPO REAL'}
         </span>
         <span className="font-label-sm text-label-sm text-text-secondary uppercase">
           · {teams.length} {teams.length === 1 ? 'equipo' : 'equipos'}

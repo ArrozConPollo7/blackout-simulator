@@ -5,6 +5,8 @@
 
 import type {
   CrisisResponse,
+  CrisisVoteRequest,
+  CrisisVoteResponse,
   DecisionRequest,
   DecisionResponse,
   GameStateResponse,
@@ -130,6 +132,10 @@ export const api = {
   fireCrisis: (gameId: string) =>
     apiFetch<CrisisResponse>(`/game/${gameId}/crisis`, { method: 'POST', host: true }),
 
+  /** Voto de la mesa en la sub-fase de votación del aula (plan 3.3). */
+  sendCrisisVote: (gameId: string, body: CrisisVoteRequest) =>
+    apiFetch<CrisisVoteResponse>(`/game/${gameId}/crisis-vote`, { method: 'POST', body }),
+
   setPhase: (gameId: string, phase: Phase) =>
     apiFetch<PhaseResponse>(`/game/${gameId}/phase`, { method: 'POST', body: { phase }, host: true }),
 };
@@ -151,7 +157,11 @@ export function describeApiError(error: unknown): string {
       case 'game_full':
         return error.detail ?? 'La partida ya tiene el máximo de equipos.';
       case 'already_decided':
-        return 'Esa decisión ya quedó registrada por tu equipo.';
+        return error.detail ?? 'Esa decisión ya quedó registrada por tu equipo.';
+      case 'wrong_scenario':
+        return error.detail ?? 'Esta ronda te tocaron otras situaciones: juega las que te asignaron.';
+      case 'locked_appliance':
+        return error.detail ?? 'Un apagón parcial dejó ese aparato fuera de juego esta ronda.';
       case 'wrong_phase':
         return error.detail ?? 'La partida no acepta decisiones en este momento.';
       case 'not_found':

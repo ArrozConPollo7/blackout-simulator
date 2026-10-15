@@ -18,8 +18,12 @@ import {
   pesoEficienciaR2,
   scenariosForCase,
 } from '../content/decisions.ts';
-import { TARIFA_ELECTRICIDAD, TARIFA_GAS } from '../content/economy.ts';
+import { TARIFA_ELECTRICIDAD, TARIFA_GAS, FALLA_APARATO_RATE, SUBSIDIO_SORPRESA, CRISIS_RATE_MAX, CRISIS_RATE_MIN } from '../content/economy.ts';
 import { PHASE_ORDER } from '../content/phases.ts';
+import { CRISIS_MEASURES, CRISIS_MEASURE_COUNT, crisisMeasuresFor } from '../content/crisis.ts';
+import { EVENT_BY_ID, EVENT_CATALOG, instantiateEvent } from '../content/events.ts';
+import { drawnScenarios, drawnScenarioIds } from '../engine/draw.ts';
+import { sample } from '../engine/rng.ts';
 
 const INVERSIONES_VALIDAS = [0, 800, 1200];
 
@@ -87,21 +91,28 @@ describe('catalogo de decisiones', () => {
     assert.equal(ids.length, Object.keys(OPTIONS_BY_ID).length);
   });
 
-  it('cada escenario tiene exactamente 3 opciones etiquetadas', () => {
+  it('cada escenario tiene 3 o 4 opciones etiquetadas', () => {
     for (const scenario of Object.values(SCENARIOS_BY_ID)) {
-      assert.equal(scenario.options.length, 3, `${scenario.id} no tiene 3 opciones`);
+      assert.ok(
+        scenario.options.length === 3 || scenario.options.length === 4,
+        `${scenario.id} tiene ${scenario.options.length} opciones`,
+      );
       for (const o of scenario.options) assert.ok(o.label.trim().length > 0);
     }
   });
 
-  it('cubre Ronda 1 (todos los aparatos), Ronda 2 (6 situaciones) y Ronda 2b', () => {
+  it('cubre Ronda 1 (todos los aparatos), el pool ampliado de Ronda 2 y Ronda 2b', () => {
     assert.equal(ROUND1_SCENARIOS.length, APPLIANCE_CATALOG.length);
-    assert.ok(ROUND2_SCENARIOS.length >= 6, 'el documento lista nevera, TV, lavadora e iluminacion ademas de A/A y cocina');
-    assert.equal(ROUND2B_SCENARIOS.length, 1);
-    assert.deepEqual(
-      ROUND2_SCENARIOS.map((s) => s.id).sort(),
-      ['alumbrado', 'calor', 'cocina', 'entretenimiento', 'lavado', 'nevera'],
+    assert.ok(
+      ROUND2_SCENARIOS.length >= 12,
+      `el pool de Ronda 2 se amplio (plan 1.1); tiene ${ROUND2_SCENARIOS.length}`,
     );
+    // Las seis situaciones del documento siguen en el catalogo: el pool se amplia, no se sustituye.
+    for (const id of ['alumbrado', 'calor', 'cocina', 'entretenimiento', 'lavado', 'nevera']) {
+      assert.ok(ROUND2_SCENARIOS.some((s) => s.id === id), `falta la situacion ${id}`);
+    }
+    assert.equal(new Set(ROUND2_SCENARIOS.map((s) => s.id)).size, ROUND2_SCENARIOS.length);
+    assert.equal(ROUND2B_SCENARIOS.length, 1);
   });
 
   it('la derivacion tarifaria de la Ronda 1 es exacta (costo del consumo neto + inversion)', () => {
@@ -153,7 +164,14 @@ describe('catalogo de decisiones', () => {
   it('en la Ronda 2 cada escenario tiene una opcion equilibrada y ninguna es dominante', () => {
     for (const scenario of ROUND2_SCENARIOS) {
       const suben = scenario.options.filter((o) => (o.effect.eficiencia ?? 0) > 0);
-      assert.equal(suben.length, 1, `${scenario.id} deberia tener una sola opcion equilibrada`);
+      assert.ok(suben.length >= 1, `${scenario.id} no tiene ninguna opcion equilibrada`);
+      // Si hay varias opciones que suben eficiencia (el matiz de 4 opciones del plan 1.2),
+      // solo una es la mejor: las demas son un punto intermedio con su propio coste.
+      const maximos = scenario.options.filter(
+        (o) => (o.effect.eficiencia ?? 0) === Math.max(...scenario.options.map((x) => x.effect.eficiencia ?? 0)),
+      );
+      assert.equal(maximos.length, 1, `${scenario.id} tiene ${maximos.length} opciones de eficiencia maxima`);
+      assert.equal(maximos[0].effect.eficiencia, 4, `${scenario.id}: la equilibrada debe dar +4`);
       const mejorConsumo = scenario.options.reduce((best, o) => {
         const costo = (o.effect.electricidad ?? 0) * TARIFA_ELECTRICIDAD + (o.effect.gas ?? 0) * TARIFA_GAS;
         return costo < best.costo ? { id: o.id, costo } : best;
@@ -222,12 +240,13 @@ describe('catalogo de decisiones', () => {
 });
 
 describe('plan de fases', () => {
-  it('sigue la secuencia del documento', () => {
+  it('sigue la secuencia del documento, con la votación del aula dentro de la crisis', () => {
     assert.deepEqual(PHASE_ORDER, [
       'lobby',
       'investigar',
       'decidir',
       'crisis',
+      'crisis_votacion',
       'decidir_2',
       'resultados',
     ]);
@@ -266,24 +285,130 @@ it('cada caso juega solo las situaciones de Ronda 2 que sus aparatos permiten', 
     }
   });
 
-  it('el peso reparte las mismas oportunidades: todo caso puede ganar 24 de eficiencia en Ronda 2', () => {
+  it('el peso reparte las mismas oportunidades: todo equipo puede ganar 24 en Ronda 2, con cualquier sorteo', () => {
+    // Plan 1.1: cada equipo recibe 3 o 4 situaciones sorteadas y el peso se calcula sobre
+    // LAS QUE LE TOCARON, asi que el maximo en juego es 24 siempre (y el minimo, comparable).
     for (const caso of CASE_CATALOG) {
-      const jugables = scenariosForCase('decidir', caso.appliances);
-      const peso = pesoEficienciaR2(caso.appliances);
-      const maximo = jugables.reduce(
-        (acc, s) => acc + Math.max(...s.options.map((o) => o.effect.eficiencia ?? 0)) * peso,
-        0,
+      for (let seed = 1; seed <= 40; seed += 1) {
+        const sorteadas = drawnScenarios(seed, caso.id);
+        assert.ok(
+          sorteadas.length >= 3 && sorteadas.length <= 4,
+          `${caso.id} (semilla ${seed}): ${sorteadas.length} situaciones`,
+        );
+        const peso = pesoEficienciaR2(sorteadas.length);
+        const maximo = sorteadas.reduce(
+          (acc, s) => acc + Math.max(...s.options.map((o) => o.effect.eficiencia ?? 0)) * peso,
+          0,
+        );
+        const minimo = sorteadas.reduce(
+          (acc, s) => acc + Math.min(...s.options.map((o) => o.effect.eficiencia ?? 0)) * peso,
+          0,
+        );
+        assert.ok(
+          Math.abs(maximo - 24) < 0.01,
+          `${caso.id} (semilla ${seed}) puede ganar ${maximo}, deberia ganar 24`,
+        );
+        // El riesgo a la baja ya no es un unico numero: el sorteo decide QUE situaciones
+        // juega el equipo y cada una tiene su propia opcion extrema (-2 a -5 por situacion,
+        // escaladas por el peso). El rango honesto es [-30, -12]; lo que SI es igual para
+        // todos es el techo (+24, arriba).
+        assert.ok(
+          minimo <= -12 && minimo >= -30,
+          `${caso.id} (semilla ${seed}) puede perder ${minimo}`,
+        );
+      }
+    }
+  });
+});
+
+describe('crisis variable y medidas colectivas (plan 2.3 y 3)', () => {
+  it('hay cuatro medidas, cada una con su severidad y sus textos de aula', () => {
+    assert.equal(CRISIS_MEASURES.length, 4);
+    assert.equal(new Set(CRISIS_MEASURES.map((m) => m.id)).size, 4);
+    assert.equal(new Set(CRISIS_MEASURES.map((m) => m.severity)).size, 4);
+    for (const medida of CRISIS_MEASURES) {
+      assert.ok(medida.label.trim().length > 0, `${medida.id} sin etiqueta`);
+      assert.ok(medida.description.length > 40, `${medida.id} sin explicacion para el aula`);
+      assert.ok(medida.severity >= 1 && medida.severity <= 4, `${medida.id} severidad fuera de rango`);
+    }
+  });
+
+  it('cada partida ofrece tres medidas distintas, ordenadas de la mas suave a la mas severa', () => {
+    for (let seed = 1; seed <= 60; seed += 1) {
+      const papeleta = crisisMeasuresFor(seed);
+      assert.equal(papeleta.length, CRISIS_MEASURE_COUNT);
+      assert.equal(new Set(papeleta.map((m) => m.id)).size, CRISIS_MEASURE_COUNT);
+      assert.deepEqual(
+        papeleta.map((m) => m.severity),
+        [...papeleta.map((m) => m.severity)].sort((a, b) => a - b),
       );
-      const minimo = jugables.reduce(
-        (acc, s) => acc + Math.min(...s.options.map((o) => o.effect.eficiencia ?? 0)) * peso,
-        0,
+      // Determinista: la misma semilla da siempre la misma papeleta.
+      assert.deepEqual(crisisMeasuresFor(seed).map((m) => m.id), papeleta.map((m) => m.id));
+      for (const medida of papeleta) assert.ok(CRISIS_MEASURES.includes(medida));
+    }
+  });
+
+  it('las medidas con inversion propia usan las tarifas, no numeros sueltos', () => {
+    // Compra comunitaria: $6.000 por equipo y un recorte porcentual del consumo.
+    const compra = CRISIS_MEASURES.find((m) => m.id === 'compra-comunitaria');
+    assert.ok(compra);
+    assert.equal(compra.effect.presupuesto, -6000);
+    assert.ok((compra.effect.electricidadPct ?? 0) < 0, 'debe recortar consumo electrico');
+    assert.ok((compra.effect.gasPct ?? 0) < 0, 'debe recortar consumo de gas');
+    // Tarifa de emergencia: recargo proporcional a la factura, no un monto fijo.
+    const tarifa = CRISIS_MEASURES.find((m) => m.id === 'tarifa-emergencia');
+    assert.ok(tarifa);
+    assert.equal(tarifa.effect.presupuesto, undefined);
+    assert.equal(tarifa.effect.facturaElectricidadPct, 40);
+  });
+
+  it('el rango de intensidad de la crisis es el del plan (20-45%) y no incluye el 30% fijo de antes', () => {
+    assert.equal(CRISIS_RATE_MIN, 0.2);
+    assert.equal(CRISIS_RATE_MAX, 0.45);
+  });
+});
+
+describe('catalogo de eventos aleatorios (plan 2.2)', () => {
+  it('tiene las tres familias del plan, con ids unicos y textos de aula', () => {
+    assert.equal(EVENT_CATALOG.length, 3);
+    assert.equal(new Set(EVENT_CATALOG.map((e) => e.id)).size, 3);
+    assert.deepEqual(
+      EVENT_CATALOG.map((e) => e.kind).sort(),
+      ['fault', 'lock', 'subsidy'],
+    );
+    for (const evento of EVENT_CATALOG) {
+      assert.ok(evento.title.trim().length > 0);
+      assert.ok(evento.description('Nevera No-Frost').length > 20, `${evento.id} sin texto`);
+      assert.ok(EVENT_BY_ID[evento.id] === evento);
+    }
+  });
+
+  it('el subsidio reparte el presupuesto de la economia y no toca el consumo', () => {
+    const subsidio = instantiateEvent(EVENT_BY_ID['subsidio-sorpresa'], null);
+    assert.equal(subsidio.effect.presupuesto, SUBSIDIO_SORPRESA);
+    assert.equal(subsidio.effect.electricidad, undefined);
+    assert.equal(subsidio.effect.gas, undefined);
+  });
+
+  it('el apagon parcial no cobra nada: solo bloquea el aparato', () => {
+    const apagon = instantiateEvent(EVENT_BY_ID['apagon-parcial'], APPLIANCE_BY_ID['nevera']);
+    assert.equal(apagon.applianceId, 'nevera');
+    assert.deepEqual(apagon.effect, {});
+    assert.match(apagon.description, /nevera/i);
+  });
+
+  it('la falla de aparato cobra el 20% del consumo de referencia, en consumo y en dinero', () => {
+    for (const appliance of APPLIANCE_CATALOG) {
+      const falla = instantiateEvent(EVENT_BY_ID['falla-de-aparato'], appliance);
+      const esperadoE = Math.round(appliance.referencia.electricidad * FALLA_APARATO_RATE * 100) / 100;
+      const esperadoG = Math.round(appliance.referencia.gas * FALLA_APARATO_RATE * 100) / 100;
+      assert.equal(falla.effect.electricidad, esperadoE, `${appliance.id} electricidad`);
+      assert.equal(falla.effect.gas, esperadoG, `${appliance.id} gas`);
+      assert.equal(
+        falla.effect.presupuesto,
+        -Math.round(esperadoE * TARIFA_ELECTRICIDAD + esperadoG * TARIFA_GAS),
+        `${appliance.id} costo`,
       );
-      assert.ok(
-        Math.abs(maximo - 24) < 0.01,
-        `${caso.id} puede ganar ${maximo} (deberia ganar lo mismo que los demas)`,
-      );
-      // El riesgo a la baja no es idéntico pero sí comparable: entre -22 y -24 puntos.
-      assert.ok(minimo <= -22 && minimo >= -24, `${caso.id} puede perder ${minimo}`);
     }
   });
 });

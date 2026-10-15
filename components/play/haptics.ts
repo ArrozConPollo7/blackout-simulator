@@ -39,3 +39,13 @@ export function hapticDeny(): void {
 export function hapticTimeWarn(): void {
   zumbido([18, 60, 18]);
 }
+
+/** Voto emitido en la crisis: dos pulsos cortos, es una decisión colectiva (plan 4.2). */
+export function hapticVote(): void {
+  zumbido([14, 40, 14]);
+}
+
+/** Se reveló la medida ganadora: patrón largo, distinto de cualquier toque. */
+export function hapticReveal(): void {
+  zumbido([30, 70, 30, 70, 60]);
+}

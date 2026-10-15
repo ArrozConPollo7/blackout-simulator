@@ -107,11 +107,23 @@ Aparecen situaciones con 3 opciones cada una. Ejemplo:
 
 Cada opción tiene un efecto ya definido en `DecisionEffect` (ver sección 5) — el jugador ve el resultado inmediatamente después de elegir.
 
-### Evento sorpresa — Crisis energética (minuto ~9)
+El catálogo tiene 14 situaciones y cada caso juega **3 o 4 sorteadas** (las que sus aparatos
+permiten): la primera partida y la segunda ya no son el mismo guion. El sorteo sale de la semilla
+de la partida, así que se puede reproducir.
 
-> 🚨 **¡Crisis energética!** Debido a una alta demanda, el precio de la electricidad aumentó un 30%.
+### Evento sorpresa — Crisis energética (momento a criterio del Host)
+
+> 🚨 **¡Crisis energética!** Debido a una alta demanda, el precio de la electricidad aumentó un 30% (el porcentaje se sortea entre 20% y 45% al iniciar la partida).
 
 Dispara una ronda de "últimas decisiones" (Ronda 2b). Las decisiones previas ahora importan: un equipo que ya redujo consumo sufre menos el aumento; uno que dejó todo encendido ve su factura dispararse. El Worker aplica el multiplicador sobre el consumo acumulado de cada equipo, no de forma pareja.
+
+### Evento sorpresa — La votación del aula
+
+Antes de las últimas decisiones, la crisis se convierte en una decisión **colectiva**: el proyector
+ofrece 3 medidas de emergencia (racionamiento parejo, tarifa de emergencia, fondo de ayuda mutua,
+compra comunitaria) y cada mesa vota una desde su celular en una ventana de 45 s. La medida
+ganadora —mayoría simple; en caso de empate, la más severa— se aplica a **todos los equipos por
+igual**, así que la discusión entre mesas es parte del juego y no un detalle de ambientación.
 
 ### Ronda 3 — El precio (cálculo final)
 
@@ -184,7 +196,7 @@ No se necesitan fotos ni assets pesados: cada equipo se identifica con un **colo
 -- Una fila por partida
 create table games (
   id uuid primary key default gen_random_uuid(),
-  phase text not null default 'lobby', -- lobby | investigar | decidir | crisis | decidir_2 | resultados
+  phase text not null default 'lobby', -- lobby | investigar | decidir | crisis | crisis_votacion | decidir_2 | resultados
   timer_ends_at timestamptz,
   crisis_triggered boolean default false
 );
@@ -217,6 +229,11 @@ create table decisions (
 );
 ```
 
+Las tablas son las mismas para todo lo nuevo: la semilla se deriva del id de la partida
+(`GAME_SEED` la puede fijar) y los votos de la crisis son filas de `decisions`
+(`round = 'crisis_vote'`, `choice = 'vote:<medida>'`), igual que el recargo de la crisis o los
+eventos aleatorios (`round = 'event'`). Nada de columnas nuevas para la Fase 5.
+
 Realtime se activa escuchando cambios en `games` y `teams` (Postgres Changes) o, si prefieres menos overhead de base de datos, usando un canal de **broadcast** puro desde el Worker cada vez que recalcula el estado.
 
 ---
@@ -224,13 +241,26 @@ Realtime se activa escuchando cambios en `games` y `teams` (Postgres Changes) o,
 ## 5. Motor de juego (tipos compartidos)
 
 ```typescript
-type Phase = 'lobby' | 'investigar' | 'decidir' | 'crisis' | 'decidir_2' | 'resultados';
+type Phase =
+  | 'lobby'
+  | 'investigar'
+  | 'decidir'
+  | 'crisis'
+  | 'crisis_votacion' // la votación colectiva de la medida de emergencia
+  | 'decidir_2'
+  | 'resultados';
 
 interface GameState {
   phase: Phase;
   timerEndsAt: string;
   crisisTriggered: boolean;
   teams: TeamState[];
+  seed: number;            // semilla de la partida: todo sorteo sale de aquí
+  crisisRate: number;      // intensidad del alza sorteada (0,20 - 0,45)
+  activeEvents: GameEventInstance[]; // eventos aleatorios vigentes en la ronda
+  crisisMeasures: CrisisMeasure[];   // las 3 medidas que se votan
+  crisisVotes: CrisisVote[];         // votos recibidos
+  crisisResolvedMeasureId: string | null; // medida ya aplicada a todos
 }
 
 interface TeamState {

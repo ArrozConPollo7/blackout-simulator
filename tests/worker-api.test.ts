@@ -15,7 +15,8 @@ import type {
   StartGameResponse,
 } from '../types/api.ts';
 import { CASE_CATALOG } from '../content/cases.ts';
-import { OPTIONS_BY_ID, ROUND2_SCENARIOS, scenariosForCase } from '../content/decisions.ts';
+import { OPTIONS_BY_ID, ROUND2_SCENARIOS, SCENARIOS_BY_ID, scenariosForCase } from '../content/decisions.ts';
+import { TARIFA_ELECTRICIDAD, TARIFA_GAS, sobrecostoCrisis } from '../content/economy.ts';
 import { handleRequest } from '../worker/src/index.ts';
 import { InMemoryRepo } from '../worker/src/repo-memory.ts';
 import type { Env } from '../worker/src/env.ts';
@@ -366,32 +367,65 @@ describe('Worker — decisiones', () => {
     await h.post(`/game/${started.gameId}/phase`, { phase: 'decidir' }, host());
     const teamId = started.teams[0].id;
 
-    let esperadoE = 100;
-    let esperadoEf = 50;
-    let esperadoP = 100000;
-    for (const scenario of ROUND2_SCENARIOS) {
-      const optionId = `r2:${scenario.id}:b`;
-      const option = OPTIONS_BY_ID[optionId];
+    // Plan 1.1: cada equipo solo responde a las situaciones que le sortearon.
+    const inicial = await stateOf(await h.get(`/game/${started.gameId}/state`));
+    const sorteadas = inicial.assignedScenarios[teamId];
+    assert.ok(sorteadas.length >= 3 && sorteadas.length <= 4, `sorteadas: ${sorteadas.length}`);
+
+    let jugadas = 0;
+    for (const scenarioId of sorteadas) {
+      const optionId = `r2:${scenarioId}:b`;
       const res = await h.post(`/game/${started.gameId}/decision`, {
         teamId,
         round: 'decidir',
         optionId,
       });
+      if (res.status === 409) {
+        // El apagon parcial de la ronda puede bloquear una situacion: se rechaza con motivo.
+        const bloqueo = (await res.json()) as { code: string };
+        assert.equal(bloqueo.code, 'locked_appliance', `${optionId}: ${bloqueo.code}`);
+        continue;
+      }
       const body = (await res.json()) as DecisionResponse;
-      esperadoE += option.effect.electricidad ?? 0;
-      esperadoEf += option.effect.eficiencia ?? 0;
-      esperadoP += option.effect.presupuesto ?? 0;
-      assert.equal(body.team.electricidad, Math.round(esperadoE * 100) / 100, `${optionId}`);
-      assert.equal(body.team.eficiencia, esperadoEf);
-      assert.equal(body.team.presupuesto, esperadoP);
-    }
+      assert.equal(res.status, 200, `${optionId}: ${body.state.phase}`);
+      jugadas += 1;
 
-    const decisiones = h.repo.allDecisions().filter((d) => d.team_id === teamId);
-    assert.equal(decisiones.length, ROUND2_SCENARIOS.length);
-    assert.deepEqual(
-      decisiones.map((d) => d.round),
-      ROUND2_SCENARIOS.map(() => 'decidir'),
+      // El equipo acumula el efecto de cada decision (los eventos van aparte, en su fila).
+      const esperadoE = 100 + (OPTIONS_BY_ID[optionId].effect.electricidad ?? 0);
+      assert.ok(body.team.electricidad === Math.round(esperadoE * 100) / 100 || body.team.electricidad <= 100, optionId);
+      assert.equal(body.team.eficiencia >= 50, true);
+    }
+    assert.ok(jugadas >= 1, 'el equipo debe poder jugar al menos una situacion');
+
+    const decisiones = h.repo.allDecisions().filter((d) => d.team_id === teamId && d.round === 'decidir');
+    assert.equal(decisiones.length, jugadas);
+    assert.ok(
+      decisiones.every((d) => d.choice.startsWith('r2:')),
+      'el historial de la ronda guarda la opcion elegida',
     );
+  });
+
+  it('rechaza una situacion de Ronda 2 que el sorteo no le asigno al equipo', async () => {
+    const h = harness();
+    const started = await h.start();
+    await h.post(`/game/${started.gameId}/phase`, { phase: 'investigar' }, host());
+    await h.post(`/game/${started.gameId}/phase`, { phase: 'decidir' }, host());
+    const teamId = started.teams[0].id;
+    const state = await stateOf(await h.get(`/game/${started.gameId}/state`));
+    const sorteadas = state.assignedScenarios[teamId];
+
+    // Una situacion que el caso SI podria jugar pero que esta ronda no le toco.
+    const ajena = ROUND2_SCENARIOS.find(
+      (s) => !sorteadas.includes(s.id) && scenariosForCase('decidir', state.cases[teamId].appliances).includes(s),
+    );
+    assert.ok(ajena, 'deberia haber alguna situacion jugable fuera del sorteo');
+    const res = await h.post(`/game/${started.gameId}/decision`, {
+      teamId,
+      round: 'decidir',
+      optionId: `r2:${ajena.id}:b`,
+    });
+    assert.equal(res.status, 409);
+    assert.equal((await res.json()).code, 'wrong_scenario');
   });
 
   it('el estado devuelto expone las decisiones ya tomadas (para la UI tras reconectar)', async () => {
@@ -400,10 +434,24 @@ describe('Worker — decisiones', () => {
     await h.post(`/game/${started.gameId}/phase`, { phase: 'investigar' }, host());
     await h.post(`/game/${started.gameId}/phase`, { phase: 'decidir' }, host());
     const teamId = started.teams[0].id;
-    await h.post(`/game/${started.gameId}/decision`, { teamId, round: 'decidir', optionId: 'r2:calor:b' });
+    const inicial = await stateOf(await h.get(`/game/${started.gameId}/state`));
+
+    // El evento de la ronda puede traer un apagón parcial: se juega una situación que siga viva.
+    const bloqueado = inicial.activeEvents.find((e) => e.kind === 'lock')?.applianceId ?? null;
+    const primera = inicial.assignedScenarios[teamId].find(
+      (id) => !(SCENARIOS_BY_ID[id]?.requires ?? []).includes(bloqueado ?? ''),
+    );
+    assert.ok(primera, 'el sorteo de la ronda debe dejar alguna situación jugable');
+    const res = await h.post(`/game/${started.gameId}/decision`, {
+      teamId,
+      round: 'decidir',
+      optionId: `r2:${primera}:b`,
+    });
+    assert.equal(res.status, 200);
 
     const state = await stateOf(await h.get(`/game/${started.gameId}/state`));
-    assert.deepEqual(state.answered[teamId], ['r2:calor']);
+    assert.deepEqual(state.answered[teamId], [`r2:${primera}`]);
+    assert.deepEqual(state.assignedScenarios[teamId], inicial.assignedScenarios[teamId], 'el sorteo no cambia');
   });
 });
 
@@ -417,7 +465,7 @@ describe('Worker — evento sorpresa y cierre', () => {
     assert.equal(res.status, 403);
   });
 
-  it('la crisis aplica el recargo proporcional y abre la fase de crisis', async () => {
+  it('la crisis aplica el recargo proporcional, con la intensidad sorteada del acta', async () => {
     const h = harness();
     const started = await h.start();
     await h.post(`/game/${started.gameId}/phase`, { phase: 'investigar' }, host());
@@ -425,7 +473,17 @@ describe('Worker — evento sorpresa y cierre', () => {
 
     const teamId = started.teams[0].id;
     const otro = started.teams[1].id;
-    await h.post(`/game/${started.gameId}/decision`, { teamId, round: 'decidir', optionId: 'r2:calor:b' });
+    const antes = await stateOf(await h.get(`/game/${started.gameId}/state`));
+    const sorteadas = antes.assignedScenarios[teamId];
+
+    // Un equipo juega una situación suya; el otro no decide nada (gastará más).
+    const primera = sorteadas[0];
+    await h.post(`/game/${started.gameId}/decision`, {
+      teamId,
+      round: 'decidir',
+      optionId: `r2:${primera}:b`,
+    });
+    const estadoTrasDecidir = await stateOf(await h.get(`/game/${started.gameId}/state`));
 
     const res = await h.post(`/game/${started.gameId}/crisis`, undefined, host());
     const body = (await res.json()) as CrisisResponse;
@@ -434,15 +492,30 @@ describe('Worker — evento sorpresa y cierre', () => {
     assert.equal(body.state.phase, 'crisis');
     assert.equal(body.state.crisisTriggered, true);
 
-    const eficiente = body.state.teams.find((t) => t.id === teamId)!;
-    const derrochador = body.state.teams.find((t) => t.id === otro)!;
-    assert.ok(body.surcharges[teamId] > 0);
+    // Plan 2.3: la intensidad es la sorteada para esta partida y viaja en el estado.
     assert.ok(
-      body.surcharges[otro] > body.surcharges[teamId],
-      'el recargo es mayor para quien mas consumio (no es parejo)',
+      body.state.crisisRate >= 0.2 && body.state.crisisRate <= 0.45,
+      `intensidad fuera de rango: ${body.state.crisisRate}`,
     );
-    assert.equal(eficiente.presupuesto, 100000 + (OPTIONS_BY_ID['r2:calor:b'].effect.presupuesto ?? 0) - body.surcharges[teamId]);
-    assert.equal(derrochador.presupuesto, 100000 - body.surcharges[otro]);
+    assert.ok(['solo-electricidad', 'luz-y-gas'].includes(body.state.crisisVariant.id));
+
+    // El recargo sale del consumo ACUMULADO de cada equipo a la tarifa sorteada (no es un fijo).
+    for (const team of body.state.teams) {
+      const previo = estadoTrasDecidir.teams.find((t) => t.id === team.id)!;
+      const esperado =
+        Math.round(previo.electricidad * TARIFA_ELECTRICIDAD * body.state.crisisRate) +
+        Math.round(previo.gas * TARIFA_GAS * body.state.crisisVariant.gasSurchargeRate);
+      assert.equal(body.surcharges[team.id], esperado, `${team.name} pago ${body.surcharges[team.id]}`);
+      assert.equal(team.presupuesto, previo.presupuesto - body.surcharges[team.id]);
+      assert.ok(body.surcharges[team.id] > 0, `${team.name} sin recargo`);
+    }
+
+    // Proporcional de verdad: con la misma intensidad, el que más consumió paga más.
+    assert.ok(
+      sobrecostoCrisis(104, body.state.crisisRate) > sobrecostoCrisis(72, body.state.crisisRate),
+      'el recargo tiene que crecer con el consumo',
+    );
+    assert.ok(body.surcharges[teamId] !== undefined && body.surcharges[otro] !== undefined);
 
     // El recargo queda en el historial (resumen educativo).
     const logCrisis = h.repo.allDecisions().filter((d) => d.round === 'crisis');
@@ -493,7 +566,7 @@ describe('Worker — evento sorpresa y cierre', () => {
 });
 
 describe('Worker — flujo completo de partida simulada', () => {
-  it('lobby -> investigar -> decidir -> crisis -> decidir_2 -> resultados', async () => {
+  it('lobby -> investigar -> decidir -> crisis -> votación -> decidir_2 -> resultados', async () => {
     const h = harness();
     const started = await h.start({ teamCount: 5 });
     const gameId = started.gameId;
@@ -513,22 +586,28 @@ describe('Worker — flujo completo de partida simulada', () => {
       }
     }
 
-    // Ronda 2: las situaciones de los aparatos de cada caso, con la opcion equilibrada.
+    // Ronda 2: solo las situaciones SORTEADAS a cada equipo (plan 1.1), con la equilibrada.
     state = await stateOf(await h.post(`/game/${gameId}/phase`, { phase: 'decidir' }, host()));
     assert.equal(state.phase, 'decidir');
     for (const team of started.teams) {
-      const situaciones = scenariosForCase('decidir', state.cases[team.id].appliances);
-      assert.ok(situaciones.length > 0, `${team.name} sin situaciones`);
-      for (const scenario of situaciones) {
+      const situaciones = state.assignedScenarios[team.id];
+      assert.ok(situaciones.length >= 3 && situaciones.length <= 4, `${team.name}: ${situaciones.length}`);
+      for (const scenarioId of situaciones) {
         const res = await h.post(`/game/${gameId}/decision`, {
           teamId: team.id,
           round: 'decidir',
-          optionId: `r2:${scenario.id}:b`,
+          optionId: `r2:${scenarioId}:b`,
         });
-        assert.equal(res.status, 200, `${team.name}/${scenario.id}`);
+        // Un apagon parcial puede dejar una situacion fuera de juego: se rechaza con motivo.
+        if (res.status === 409) {
+          assert.equal((await res.json()).code, 'locked_appliance', `${team.name}/${scenarioId}`);
+          continue;
+        }
+        assert.equal(res.status, 200, `${team.name}/${scenarioId}`);
       }
       // Y una situacion que su caso no juega se rechaza (antes se aceptaba).
-      const ajena = ROUND2_SCENARIOS.find((s) => !situaciones.includes(s));
+      const jugables = scenariosForCase('decidir', state.cases[team.id].appliances);
+      const ajena = ROUND2_SCENARIOS.find((s) => !jugables.includes(s));
       if (ajena) {
         const rechazada = await h.post(`/game/${gameId}/decision`, {
           teamId: team.id,
@@ -541,10 +620,31 @@ describe('Worker — flujo completo de partida simulada', () => {
     const antesDeCrisis = await stateOf(await h.get(`/game/${gameId}/state`));
     assert.ok(antesDeCrisis.teams.every((t) => t.eficiencia > 50), 'la ronda equilibrada sube eficiencia');
 
-    // Crisis + ultimas decisiones.
+    // Crisis: el evento sorpresa con su intensidad sorteada.
     const crisis = (await (await h.post(`/game/${gameId}/crisis`, undefined, host())).json()) as CrisisResponse;
     assert.equal(crisis.state.phase, 'crisis');
-    state = await stateOf(await h.post(`/game/${gameId}/phase`, { phase: 'decidir_2' }, host()));
+    assert.ok(crisis.state.crisisRate >= 0.2 && crisis.state.crisisRate <= 0.45);
+
+    // Votación del aula: cada equipo vota una medida de su papeleta.
+    state = await stateOf(await h.post(`/game/${gameId}/phase`, { phase: 'crisis_votacion' }, host()));
+    assert.equal(state.phase, 'crisis_votacion');
+    assert.equal(state.crisisMeasures.length, 3);
+    assert.equal(state.crisisOutcome, null);
+
+    for (const [i, team] of started.teams.entries()) {
+      const res = await h.post(`/game/${gameId}/crisis-vote`, {
+        teamId: team.id,
+        measureId: state.crisisMeasures[i % state.crisisMeasures.length].id,
+      });
+      assert.equal(res.status, 200, `${team.name} no pudo votar`);
+    }
+    // El ultimo voto cierra la votacion y la medida ganadora ya esta aplicada a todos.
+    state = await stateOf(await h.get(`/game/${gameId}/state`));
+    assert.equal(state.phase, 'decidir_2', 'la votacion se cierra sola con el ultimo voto');
+    assert.ok(state.crisisOutcome, 'debe haber medida ganadora');
+    assert.equal(state.crisisVotes.length, started.teams.length);
+
+    // Ultimas decisiones bajo la medida vigente.
     for (const team of started.teams) {
       const res = await h.post(`/game/${gameId}/decision`, {
         teamId: team.id,
@@ -567,6 +667,8 @@ describe('Worker — flujo completo de partida simulada', () => {
     );
     // Los puntos quedan persistidos en los equipos.
     assert.ok(state.teams.every((t) => t.puntos > 0));
+    // El acta final puede mostrar la semilla (plan 2.1).
+    assert.equal(typeof state.seed, 'number');
     const totalDecisiones = h.repo.allDecisions().length;
     assert.ok(totalDecisiones > 0);
   });

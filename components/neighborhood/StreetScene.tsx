@@ -323,16 +323,23 @@ interface PublicLightingProps {
   positions: number[];
   z: number;
   isCrisis: boolean;
+  /** Tension de la escena (0 nominal - 1 crisis aplicada). Plan 4.1. */
+  tension: number;
 }
 
-function PublicLighting({ positions, z, isCrisis }: PublicLightingProps) {
+function PublicLighting({ positions, z, isCrisis, tension }: PublicLightingProps) {
   const glassMaterial = useMemo(() => sharedGlowMaterial('#FFE7B0', 0.95), []);
   const poolMaterial = useMemo(() => sharedGlowMaterial('#FFE7B0', 0.16), []);
   const pole = metalMaterial('#4C5462', 0.6, 0.4);
 
-  useFrame(() => {
+  useFrame((state) => {
     // Farolas compartidas: en crisis el alumbrado entero cae y titila a la vez.
-    const flicker = isCrisis ? 0.18 + 0.12 * Math.random() : 1;
+    // Con la votacion en marcha (tension intermedia) el parpadeo se adelanta y es mas
+    // erratico: la calle no esta apagada, esta nerviosa.
+    const base = 1 - 0.82 * tension;
+    const amplitud = 0.12 + 0.14 * tension + 0.1 * tension * (1 - tension);
+    const nervio = tension * (1 - tension) * 4 * 0.5 * (0.5 + 0.5 * Math.sin(state.clock.elapsedTime * 21.7));
+    const flicker = tension > 0 ? clamp(base + amplitud * Math.random() + nervio, 0, 1) : 1;
     glassMaterial.opacity = 0.95 * flicker;
     poolMaterial.opacity = 0.16 * flicker;
   });
@@ -437,11 +444,13 @@ interface PowerGridProps {
   layout: NeighborhoodLayout;
   street: StreetLayout;
   isCrisis: boolean;
+  /** Tension de la escena (0 nominal - 1 crisis aplicada). Plan 4.1. */
+  tension: number;
 }
 
 const PULSES_PER_SPAN = 3;
 
-function PowerGrid({ layout, street, isCrisis }: PowerGridProps) {
+function PowerGrid({ layout, street, isCrisis, tension }: PowerGridProps) {
   const placements = layout.placements;
   const structuralKey = placements.map((p) => `${p.team.id}@${p.position[0].toFixed(2)}`).join('|');
 
@@ -555,7 +564,7 @@ function PowerGrid({ layout, street, isCrisis }: PowerGridProps) {
       // electricidad 30..170 kWh → 0..1: cuánta energía circula por ese cable.
       const carga = team ? clamp((team.electricidad - 30) / 140, 0.05, 1) : 0.4;
       const speed = (span.drop ? 0.16 : 0.1) * (0.35 + carga);
-      const crisisDim = isCrisis ? 0.45 + 0.35 * Math.sin(time * 11 + s) : 1;
+      const crisisDim = isCrisis ? 0.45 + 0.35 * Math.sin(time * (11 + 7 * tension) + s) : 1;
 
       for (let k = 0; k < PULSES_PER_SPAN; k += 1) {
         const t = (k / PULSES_PER_SPAN + time * speed + s * 0.13) % 1;
@@ -574,7 +583,7 @@ function PowerGrid({ layout, street, isCrisis }: PowerGridProps) {
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     // El brillo del cable entero late con la red (material compartido, 1 escritura).
-    pulseMaterial.opacity = 0.75 * (isCrisis ? 0.5 + 0.5 * Math.sin(time * 7) : 1);
+    pulseMaterial.opacity = 0.75 * (isCrisis ? 0.5 + 0.5 * Math.sin(time * (7 + 8 * tension)) : 1);
   });
 
   return (
@@ -706,9 +715,11 @@ export interface StreetSceneProps {
   layout: NeighborhoodLayout;
   street: StreetLayout;
   isCrisis: boolean;
+  /** Tension de la escena (0 nominal - 1 crisis aplicada). Plan 4.1. */
+  tension?: number;
 }
 
-export default function StreetScene({ layout, street, isCrisis }: StreetSceneProps) {
+export default function StreetScene({ layout, street, isCrisis, tension = isCrisis ? 1 : 0 }: StreetSceneProps) {
   const spanWidth = layout.bounds.maxX - layout.bounds.minX;
   const centerX = 0;
   const lampPositions = useMemo(
@@ -742,8 +753,13 @@ export default function StreetScene({ layout, street, isCrisis }: StreetScenePro
         centerX={centerX}
         seed={hashSeed(layout)}
       />
-      <PublicLighting positions={lampPositions} z={street.sidewalk[1] - 0.1} isCrisis={isCrisis} />
-      <PowerGrid layout={layout} street={street} isCrisis={isCrisis} />
+      <PublicLighting
+        positions={lampPositions}
+        z={street.sidewalk[1] - 0.1}
+        isCrisis={isCrisis}
+        tension={tension}
+      />
+      <PowerGrid layout={layout} street={street} isCrisis={isCrisis} tension={tension} />
       <Transformer position={[layout.bounds.minX - 4.2, 0, street.sidewalk[0] + 1.5]} isCrisis={isCrisis} />
       <StreetFurniture street={street} centerX={centerX} spanWidth={spanWidth} />
       <Skyline centerX={centerX} spanWidth={spanWidth} isCrisis={isCrisis} />

@@ -17,16 +17,17 @@ import AnimatedNumber from '@/components/play/AnimatedNumber';
 import Celebration from '@/components/play/Celebration';
 import ChoiceButton from '@/components/play/ChoiceButton';
 import Countdown from '@/components/play/Countdown';
-import EffectChips from '@/components/play/EffectChips';
+import CrisisVoteCard from '@/components/play/CrisisVoteCard';
+import EffectChips, { EventAlert } from '@/components/play/EffectChips';
 import HeaderTimer from '@/components/play/HeaderTimer';
 import PhaseBanner from '@/components/play/PhaseBanner';
 import RoundProgress from '@/components/play/RoundProgress';
 import SoundToggle from '@/components/SoundToggle';
 import { hapticConfirm, hapticDeny, hapticTap } from '@/components/play/haptics';
+import { drawnScenariosForCase } from '@/engine/draw';
 import {
   APPLIANCE_BY_ID,
   ROUND2B_SCENARIOS,
-  scenariosForCase,
 } from '@/content/decisions';
 import { PRESUPUESTO_INICIAL } from '@/content/economy';
 import type { ApplianceProfile, DecisionScenario } from '@/content/decisions';
@@ -83,12 +84,12 @@ function rondaCompleta(
 ): boolean {
   const escenarios =
     round === 'decidir_2'
-      ? ROUND2B_SCENARIOS
-      : scenariosForCase('decidir', state.cases[teamId]?.appliances ?? null);
+      ? ROUND2B_SCENARIOS.map((s) => s.id)
+      : state.assignedScenarios[teamId] ?? [];
   if (escenarios.length === 0) return false;
   const contestadas = state.answered[teamId] ?? [];
-  return escenarios.every((escenario) =>
-    contestadas.includes(round === 'decidir_2' ? 'r2b' : `r2:${escenario.id}`),
+  return escenarios.every((id) =>
+    contestadas.includes(round === 'decidir_2' ? 'r2b' : `r2:${id}`),
   );
 }
 
@@ -102,7 +103,11 @@ function mensajeJugador(error: unknown): string {
       case 'wrong_phase':
         return 'La ronda ya cambió: espera la próxima lectura del Host.';
       case 'already_decided':
-        return 'Esa situación ya quedó registrada.';
+        return 'Esa jugada ya quedó registrada.';
+      case 'wrong_scenario':
+        return 'Esta ronda te tocaron otras situaciones: juega las que aparecen en tu pantalla.';
+      case 'locked_appliance':
+        return 'Un apagón parcial dejó ese aparato fuera de juego en esta ronda.';
       default:
         return 'La jugada no se pudo registrar. Toca otra vez.';
     }
@@ -130,6 +135,11 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
 
   const connection = useGameState(gameId);
   const state = connection.state;
+  /** Última lectura buena del estado: los callbacks estables la consultan sin re-suscribirse. */
+  const stateRef = useRef<GameStateResponse | null>(null);
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
   const team = state?.teams.find((t) => t.id === teamId) ?? null;
   const caso = state?.cases[teamId] ?? null;
   const answered = state?.answered[teamId] ?? [];
@@ -228,6 +238,32 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
     void decidirRef.current(optionId, `r1:${abierto}`, 'investigar');
   }, []);
 
+  const votarRef = useRef<(measureId: string) => Promise<void>>(async () => {});
+  /** Voto de la mesa en la votación del aula (plan 3). La respuesta del Worker es la verdad. */
+  const votar = useCallback(
+    async (measureId: string) => {
+      const actual = stateRef.current;
+      if (!actual) return;
+      try {
+        const respuesta = await api.sendCrisisVote(actual.gameId, { teamId, measureId });
+        connection.applyState(respuesta.state);
+        playEvent(respuesta.closed ? 'resolve' : 'confirm');
+      } catch (cause) {
+        playEvent('deny');
+        hapticDeny();
+        const motivo = mensajeJugador(cause);
+        setError(motivo);
+        setErrorNonce((n) => n + 1);
+        throw new Error(motivo);
+      }
+    },
+    [teamId, connection, playEvent],
+  );
+  useEffect(() => {
+    votarRef.current = votar;
+  }, [votar]);
+  const onVote = useCallback((measureId: string) => votarRef.current(measureId), []);
+
   const appliances = useMemo(
     () =>
       (caso?.appliances ?? [])
@@ -250,11 +286,13 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
       };
     }
     if (phase === 'decidir') {
-      const mias = scenariosForCase('decidir', caso?.appliances ?? null);
+      // Solo las situaciones sorteadas a esta mesa (plan 1.1): el progreso cuenta las suyas.
+      const mias = state.assignedScenarios[teamId] ?? [];
+      if (mias.length === 0) return null;
       return {
         etiqueta: 'Situaciones resueltas',
         total: mias.length,
-        resolved: mias.filter((s) => answered.includes(`r2:${s.id}`)).length,
+        resolved: mias.filter((id) => answered.includes(`r2:${id}`)).length,
         tono: 'eficiencia' as const,
       };
     }
@@ -275,11 +313,13 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
     [choice],
   );
 
-  // Solo las situaciones cuyos aparatos tiene el caso: una oficina no decide sobre una lavadora.
+  // Las situaciones de esta mesa salen del SORTEO de la partida (state.assignedScenarios),
+  // no de un filtro local: el Worker rechaza cualquier otra cosa y la pantalla muestra lo mismo.
   const escenariosRonda2 =
     phase === 'decidir_2'
       ? ROUND2B_SCENARIOS
-      : scenariosForCase('decidir', caso?.appliances ?? null);
+      : drawnScenariosForCase(state?.seed ?? 0, caso?.caseId ?? '');
+  const miVoto = state?.crisisVotes.find((v) => v.teamId === teamId)?.measureId ?? null;
   const rondaActual: Ronda | null =
     phase === 'investigar' ? 'investigar' : phase === 'decidir' ? 'decidir' : phase === 'decidir_2' ? 'decidir_2' : null;
 
@@ -543,6 +583,19 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
                 titulo={rondaActual === 'decidir_2' ? 'Últimas decisiones bajo crisis' : 'Situaciones del día'}
                 ayuda="Cada situación tiene tres opciones: la tuya se marca al tocar y el marcador se actualiza al confirmar."
               />
+
+              {/* Eventos aleatorios de la ronda (plan 2.2 y 4.2): el texto llega del Worker. */}
+              {state?.activeEvents.map((evento) => (
+                <EventAlert
+                  key={`${evento.id}:${evento.applianceId ?? 'aula'}`}
+                  title={evento.title}
+                  description={evento.description}
+                  icon={evento.icon}
+                  effect={evento.kind === 'subsidy' ? evento.effect : undefined}
+                  tono={evento.kind === 'subsidy' ? 'alivio' : 'aviso'}
+                />
+              ))}
+
               <ListaEscenarios
                 escenarios={escenariosRonda2}
                 answered={answered}
@@ -559,8 +612,20 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
             </div>
           )}
 
+          {/* VOTACIÓN DEL AULA (plan 3) */}
+          {phase === 'crisis_votacion' && state && (
+            <CrisisVoteCard
+              medidas={state.crisisMeasures}
+              miVoto={miVoto}
+              equipos={state.teams.length}
+              votos={state.crisisVotes.length}
+              resultado={state.crisisOutcome}
+              onVote={onVote}
+            />
+          )}
+
           {/* CRISIS */}
-          {phase === 'crisis' && (
+          {phase === 'crisis' && state && (
             <div className="flex flex-col gap-4 anim-fade">
               <div className="relative overflow-hidden rounded-xl bg-error-container/30 p-4 shadow-xl border border-accent-crisis anim-glitch anim-scanline">
                 <div className="relative z-10 flex flex-col gap-2.5">
@@ -570,17 +635,21 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
                     </span>
                     <Countdown
                       phase={phase}
-                      timerEndsAt={state?.timerEndsAt}
+                      timerEndsAt={state.timerEndsAt}
                       clockSkewMs={connection.clockSkewMs}
                       className="font-label-md text-label-md text-accent-crisis font-bold tabular-nums"
                     />
                   </div>
                   <h1 className="font-headline-md text-headline-md text-text-primary uppercase font-bold tracking-tight anim-flicker">
-                    El precio de la electricidad subió 30%
+                    La luz subió {Math.round(state.crisisRate * 100)}% para todos
                   </h1>
                   <p className="font-body-sm text-body-sm text-text-secondary">
-                    El recargo ya se aplicó sobre tu consumo acumulado: pagas 30% más por cada kWh que
-                    llevas consumido. Las últimas decisiones abren en un momento.
+                    El recargo ya se aplicó sobre tu consumo acumulado: pagas{' '}
+                    {Math.round(state.crisisRate * 100)}% más por cada kWh que llevas consumido.{' '}
+                    {state.crisisVariant.gasSurchargeRate > 0
+                      ? `El gas también subió ${Math.round(state.crisisVariant.gasSurchargeRate * 100)}%. `
+                      : ''}
+                    Ahora el aula vota una medida de emergencia.
                   </p>
                 </div>
               </div>

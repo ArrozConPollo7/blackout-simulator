@@ -22,6 +22,7 @@ import SoundToggle from '@/components/SoundToggle';
 import AnimatedNumber from '@/components/play/AnimatedNumber';
 import GridMeter from '@/components/host/GridMeter';
 import DecisionFeed from '@/components/host/DecisionFeed';
+import CrisisVotePanel from '@/components/host/CrisisVotePanel';
 import PodiumBurst from '@/components/host/PodiumBurst';
 import { audio, useAudioEvent, useSoundEnabled } from '@/lib/audio';
 import { CONSUMO_REFERENCIA_ELECTRICIDAD, PRESUPUESTO_INICIAL } from '@/content/economy';
@@ -87,6 +88,11 @@ function HostConsole() {
   const [montado, setMontado] = useState(false);
   /** Tira de actividad del proyector (sucesos reales, se conservan los últimos). */
   const [feed, setFeed] = useState<FeedEvent[]>([]);
+  /**
+   * Plan 4.1: cada revelado de la medida del aula sube esta señal y el vecindario lanza su
+   * ola de luz. Es un contador, no un booleano, para que dos revelados seguidos cuenten.
+   */
+  const [revealSignal, setRevealSignal] = useState(0);
   /** Toma de pantalla al cambiar de ronda. */
   const [toma, setToma] = useState<{ codigo: string; titulo: string; sub: string } | null>(null);
 
@@ -291,7 +297,15 @@ function HostConsole() {
   );
   /* Ronda en curso y avance del aula (todo sale del estado real) */
   const rondaActual =
-    phase === 'investigar' ? 1 : phase === 'decidir' ? 2 : phase === 'crisis' ? 3 : phase === 'decidir_2' ? 4 : 0;
+    phase === 'investigar'
+      ? 1
+      : phase === 'decidir'
+        ? 2
+        : phase === 'crisis' || phase === 'crisis_votacion'
+          ? 3
+          : phase === 'decidir_2'
+            ? 4
+            : 0;
   const prefijoRonda =
     phase === 'investigar' ? 'r1:' : phase === 'decidir' ? 'r2:' : phase === 'decidir_2' ? 'r2b' : null;
   const mesasQueDecidieron = prefijoRonda
@@ -840,7 +854,20 @@ function HostConsole() {
         {/* EN JUEGO / CRISIS */}
         {(hostPhase === 'en_juego' || hostPhase === 'crisis') && state && (
           <div className="flex flex-col gap-6 w-full">
-            {hostPhase === 'crisis' && (
+            {/* Plan 3.4: durante la votación el tablero la lleva; la crisis ya aplicada
+                no necesita una segunda capa de alerta encima. */}
+            {phase === 'crisis_votacion' && (
+              <CrisisVotePanel
+                medidas={state.crisisMeasures}
+                votos={state.crisisVotes}
+                equipos={state.teams}
+                resultado={state.crisisOutcome}
+                timerEndsAt={state.timerEndsAt}
+                clockSkewMs={connection.clockSkewMs}
+                onReveal={() => setRevealSignal((n) => n + 1)}
+              />
+            )}
+            {phase === 'crisis' && (
               <CrisisOverlay cargaLineaPct={cargaLineaPct} />
             )}
 
@@ -866,8 +893,10 @@ function HostConsole() {
                   : phase === 'decidir'
                     ? 'Cada mesa elige cómo usar sus aparatos.'
                     : phase === 'crisis'
-                      ? 'El recargo del 30% ya está aplicado sobre el consumo acumulado.'
-                      : phase === 'decidir_2'
+                      ? `El recargo del ${Math.round(state.crisisRate * 100)}% ya está aplicado sobre el consumo acumulado.`
+                      : phase === 'crisis_votacion'
+                        ? 'El aula vota la medida de emergencia: se aplica a todas las casas.'
+                        : phase === 'decidir_2'
                         ? 'Últimas decisiones: la red no perdona dos veces.'
                         : 'La sala está en marcha.'}
               </span>
@@ -957,6 +986,10 @@ function HostConsole() {
             <NeighborhoodStage
               teams={state.teams}
               isCrisis={hostPhase === 'crisis'}
+              crisisMode={
+                hostPhase === 'crisis' ? (phase === 'crisis_votacion' ? 'votacion' : 'crisis') : 'calma'
+              }
+              revealSignal={revealSignal}
               selectedTeamId={selectedTeamId}
               onSelectTeam={(teamId) =>
                 setSelectedTeamId((current) => (current === teamId ? null : teamId))

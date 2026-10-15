@@ -3,8 +3,19 @@
  * El Worker es la unica fuente de verdad: el cliente nunca calcula consecuencias.
  */
 
-import type { DecisionEffect, GameState, Phase, TeamState } from './game.ts';
+import type {
+  CrisisMeasure,
+  CrisisOutcome,
+  CrisisVariantInfo,
+  CrisisVote,
+  DecisionEffect,
+  GameEventInstance,
+  GameState,
+  Phase,
+  TeamState,
+} from './game.ts';
 import type { FinalResults } from '../engine/results.ts';
+
 
 /** Caso que le toca a un equipo, tal como lo devuelve GET /game/:id/state. */
 export interface CaseView {
@@ -31,6 +42,26 @@ export interface GameStateResponse {
   answered: Record<string, string[]>;
   /** Ranking final: solo con la fase en `resultados`, null en cualquier otro caso. */
   results: FinalResults | null;
+  /** Semilla de la partida (plan 2.1): se muestra en el acta y permite repetir el guion. */
+  seed: number;
+  /** Intensidad sorteada del alza de tarifa de esta partida (0,20-0,45). */
+  crisisRate: number;
+  /** Efecto que acompaña a la crisis en esta partida. */
+  crisisVariant: CrisisVariantInfo;
+  /** Medidas colectivas que ofrece esta partida (orden de papeleta). */
+  crisisMeasures: CrisisMeasure[];
+  /** Votos recibidos en la sub-fase de votación. */
+  crisisVotes: CrisisVote[];
+  /** Medida ganadora ya aplicada; null mientras la votación no se resuelva. */
+  crisisOutcome: CrisisOutcome | null;
+  /** Eventos aleatorios vigentes en la fase actual (0 o 1 por ronda). */
+  activeEvents: GameEventInstance[];
+  /**
+   * Situaciones de Ronda 2 sorteadas a cada equipo (plan 1.1). El Player solo muestra las
+   * suyas y el Worker rechaza cualquier otra: el sorteo no se guarda, se recalcula de la
+   * semilla, así que el equipo que reconecta ve exactamente las mismas.
+   */
+  assignedScenarios: Record<string, string[]>;
 }
 
 export interface StartGameRequest {
@@ -96,6 +127,23 @@ export interface DecisionResponse {
   team: TeamState;
   /** Clave del escenario resuelto (`r1:nevera`, `r2:calor`, `r2b`). */
   scenarioKey: string;
+  /** Eventos aleatorios que se cobraron junto con esta decisión (falla de aparato). */
+  events: GameEventInstance[];
+  state: GameStateResponse;
+}
+
+/** Voto de un equipo en la sub-fase de votación colectiva (plan 3.3). */
+export interface CrisisVoteRequest {
+  teamId: string;
+  measureId: string;
+}
+
+export interface CrisisVoteResponse {
+  vote: CrisisVote;
+  /** Resultado ya aplicado a todos los equipos; null si la ventana sigue abierta. */
+  outcome: CrisisOutcome | null;
+  /** true cuando ese voto cerró la votación y la partida pasó a `decidir_2`. */
+  closed: boolean;
   state: GameStateResponse;
 }
 
@@ -121,8 +169,12 @@ export interface ApiErrorBody {
     | 'name_taken'
     | 'game_full'
     | 'not_configured'
-    | 'internal';
+    | 'internal'
+    /** La situación no le fue sorteada a ese equipo (plan 1.1). */
+    | 'wrong_scenario'
+    /** Un evento de la ronda bloquea el aparato que esa decisión necesita. */
+    | 'locked_appliance';
   detail?: string;
 }
 
-export type { GameState, Phase, TeamState };
+export type { CrisisMeasure, CrisisOutcome, CrisisVote, GameEventInstance, GameState, Phase, TeamState };

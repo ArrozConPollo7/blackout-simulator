@@ -751,6 +751,9 @@ export interface HouseModelProps {
   isLeader: boolean;
   isSelected: boolean;
   isCrisis: boolean;
+  /** Tension de la escena (0 nominal - 1 crisis aplicada). Plan 4.1: densidad de particula
+   *  y parpadeo proporcionales al mismo valor, sin sistema de particulas nuevo. */
+  tension?: number;
   onSelect: (teamId: string) => void;
 }
 
@@ -763,6 +766,7 @@ export default function HouseModel({
   isLeader,
   isSelected,
   isCrisis,
+  tension = isCrisis ? 1 : 0,
   onSelect,
 }: HouseModelProps) {
   const materials = useMemo(() => buildHouseMaterials(variation, team.color), [variation, team.color]);
@@ -820,12 +824,17 @@ export default function HouseModel({
 
     // Crisis = caída de tensión global, con la MISMA fase en todas las casas
     // (el parpadeo simultáneo del vecindario en crisis).
-    const crisisFlicker = isCrisis ? 0.55 + 0.45 * Math.sin(state.clock.elapsedTime * 13.2) : 1;
-    const brownout = isCrisis ? 0.62 : 1;
+    // El parpadeo sube con la tension y, en la votacion (tension intermedia), se le suma
+    // un temblor rapido: la casa no esta apagada, esta esperando el resultado.
+    const brownout = isCrisis ? 1 - 0.38 * tension : 1;
     // Eficiencia baja = instalación que falla: su propia oscilación, desfasada por casa,
     // siempre visible por encima de 0 (nunca se apaga del todo).
     const fragilidad = clamp(1 - team.eficiencia / UMBRAL_EFICIENCIA_FRAGIL, 0, 1);
     const phase = (variation.seed % 100) / 100;
+    const nervio = tension * (1 - tension) * 4 * 0.08 * Math.sin(state.clock.elapsedTime * 19.4 + phase * 0.5);
+    const crisisFlicker = isCrisis
+      ? 1 - (0.45 * tension + 0.45 * tension * (0.5 + 0.5 * Math.sin(state.clock.elapsedTime * 13.2))) + nervio
+      : 1;
     const ownFlicker =
       1 - fragilidad * (0.5 + 0.5 * Math.sin(state.clock.elapsedTime * 17 + phase * 6.28));
     const brillo = clamp(crisisFlicker * brownout * ownFlicker, 0.16, 1.05);
@@ -852,7 +861,7 @@ export default function HouseModel({
       puff.position.y = ciclo * 1.9;
       puff.position.x = Math.sin(state.clock.elapsedTime * 0.7 + index) * 0.16 * ciclo;
       puff.scale.setScalar(0.42 + ciclo * 1.25);
-      const objetivo = densidad * (1 - ciclo) * (isCrisis ? 1.25 : 1);
+      const objetivo = densidad * (1 - ciclo) * (1 + 0.25 * tension);
       material.opacity += (objetivo - material.opacity) * tSmoke;
       material.color.lerp(smokeColor, tSmoke);
     });
@@ -874,7 +883,7 @@ export default function HouseModel({
       const material = auraRef.current.material as THREE.MeshBasicMaterial;
       material.color.lerp(scratchColor2, tAura);
       const pulso = 0.72 + 0.28 * Math.sin(state.clock.elapsedTime * 1.5 + phase * 6.28);
-      const objetivo = (isSelected ? 0.42 : 0.2) * pulso * (isCrisis ? 1.15 : 1);
+      const objetivo = (isSelected ? 0.42 : 0.2) * pulso * (1 + 0.15 * tension);
       material.opacity += (objetivo - material.opacity) * tAura;
       const escala = 1 + (1 - clamp(team.eficiencia / 100, 0, 1)) * 0.22;
       auraRef.current.scale.set(
@@ -887,7 +896,7 @@ export default function HouseModel({
       const material = poolRef.current.material as THREE.MeshBasicMaterial;
       // La luz que se escapa por las ventanas: sube con el consumo y con la eficiencia.
       material.color.copy(scratchColor2).lerp(LIT_PANE, 0.55);
-      const objetivo = (0.1 + litRatio * 0.35) * brillo * (isCrisis ? 0.8 : 1);
+      const objetivo = (0.1 + litRatio * 0.35) * brillo * (1 - 0.2 * tension);
       material.opacity += (objetivo - material.opacity) * tAura;
     }
     materials.lawn.color.copy(LAWN_BASE).lerp(scratchColor2, 0.55);
