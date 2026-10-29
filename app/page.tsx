@@ -7,16 +7,69 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { readActiveGame, type ActiveGame } from '@/lib/game-store';
+import { ApiClientError, api } from '@/lib/api';
+import { clearActiveGame, readActiveGame, type ActiveGame } from '@/lib/game-store';
+import {
+  avisoDeSesion,
+  clasificarPartidaGuardada,
+  sePuedeReanudar,
+  type EstadoPartidaGuardada,
+} from '@/lib/sesion';
 import { isDevelopment, missingConfig } from '@/lib/env';
 import { salaCode } from '@/lib/ui';
 
 export default function HomePage() {
+  /** Partida guardada que el servidor confirmó abierta: la única que se ofrece abrir. */
   const [partida, setPartida] = useState<ActiveGame | null>(null);
+  /** Lo que había guardado, aunque ya no sirva (para poder explicarlo en pantalla). */
+  const [registro, setRegistro] = useState<ActiveGame | null>(null);
+  const [estado, setEstado] = useState<EstadoPartidaGuardada>('sin-registro');
+  const [verificando, setVerificando] = useState(true);
 
+  /**
+   * El registro local no se cree a ciegas: se le pregunta al centro de control.
+   *
+   * Sin esto, un celular que jugó la clase anterior abría el portal y ofrecía «Abrir la
+   * partida» de la partida vieja —con su sala y sus mesas— mientras el proyector ya tenía
+   * otra. Si la partida terminó o ya no existe, el registro se borra aquí mismo.
+   */
   useEffect(() => {
-    setPartida(readActiveGame());
+    const guardada = readActiveGame();
+    if (!guardada) {
+      setVerificando(false);
+      return;
+    }
+    setRegistro(guardada);
+    let vivo = true;
+    void (async () => {
+      let clasificacion: EstadoPartidaGuardada;
+      try {
+        const state = await api.getState(guardada.gameId);
+        clasificacion = clasificarPartidaGuardada({ guardada: true, respuesta: 'ok', fase: state.phase });
+      } catch (cause) {
+        const perdida = cause instanceof ApiClientError && cause.status === 404;
+        clasificacion = clasificarPartidaGuardada({
+          guardada: true,
+          respuesta: perdida ? 'no-existe' : 'sin-respuesta',
+          fase: null,
+        });
+      }
+      if (!vivo) return;
+      setEstado(clasificacion);
+      if (sePuedeReanudar(clasificacion)) {
+        setPartida(guardada);
+      } else {
+        setPartida(null);
+        clearActiveGame();
+      }
+      setVerificando(false);
+    })();
+    return () => {
+      vivo = false;
+    };
   }, []);
+
+  const aviso = avisoDeSesion(estado, registro ? salaCode(registro.gameId) : null);
 
   return (
     <main className="min-h-screen bg-bg-primary text-text-primary flex flex-col items-center px-6 py-14 relative overflow-hidden">
@@ -94,17 +147,34 @@ export default function HomePage() {
               Para el proyector: pide la contraseña, abre la partida y proyecta el código QR con el
               que cada mesa se registra. El vecindario reacciona al estado real de cada equipo.
             </p>
-            <Link
-              href={partida?.hostPath ?? '/host'}
-              className="h-14 px-5 rounded-xl bg-primary-container text-on-primary-container font-label-lg text-label-lg font-bold uppercase tracking-wider flex items-center justify-center gap-2 hover:opacity-90 active:scale-95 transition-all shadow-[0_0_28px_rgba(62,198,240,0.25)]"
-            >
-              <span className="material-symbols-outlined text-[22px]">play_arrow</span>
-              {partida ? 'Abrir la partida' : 'Crear partida'}
-            </Link>
+            {verificando ? (
+              <div
+                aria-busy="true"
+                className="h-14 px-5 rounded-xl bg-primary-container/30 text-on-primary-container font-label-lg text-label-lg font-bold uppercase tracking-wider flex items-center justify-center gap-2"
+              >
+                <span className="material-symbols-outlined text-[22px] animate-spin">
+                  progress_activity
+                </span>
+                Comprobando la partida…
+              </div>
+            ) : (
+              <Link
+                href={partida ? partida.hostPath : '/host'}
+                className="h-14 px-5 rounded-xl bg-primary-container text-on-primary-container font-label-lg text-label-lg font-bold uppercase tracking-wider flex items-center justify-center gap-2 hover:opacity-90 active:scale-95 transition-all shadow-[0_0_28px_rgba(62,198,240,0.25)]"
+              >
+                <span className="material-symbols-outlined text-[22px]">play_arrow</span>
+                {partida ? 'Abrir la partida' : 'Crear partida'}
+              </Link>
+            )}
             {partida && (
               <p className="font-label-sm text-label-sm text-text-secondary uppercase tracking-wider">
                 Sala <strong className="text-text-primary">{salaCode(partida.gameId)}</strong> ·{' '}
                 {partida.teams.length} {partida.teams.length === 1 ? 'mesa' : 'mesas'}
+              </p>
+            )}
+            {aviso && (
+              <p className="rounded-lg border border-accent-crisis/40 bg-accent-crisis/10 px-3 py-2 font-label-sm text-label-sm text-text-secondary">
+                {aviso}
               </p>
             )}
           </article>

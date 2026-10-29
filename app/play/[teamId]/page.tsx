@@ -38,8 +38,10 @@ import type { GameStateResponse } from '@/types/api';
 import { ApiClientError, api } from '@/lib/api';
 import { useAudioEvent } from '@/lib/audio';
 import { missingConfig } from '@/lib/env';
-import { resolveGameId } from '@/lib/game-store';
+import { clearActiveGameIf, resolveGameId } from '@/lib/game-store';
+import { clearMyTeam } from '@/lib/team-store';
 import { useGameState } from '@/lib/useGameState';
+import { useRouter } from 'next/navigation';
 import {
   CONFORT_LABEL,
   CONSUMO_LABEL,
@@ -386,9 +388,12 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
     return (
       <Marco>
         <Panel titulo={sinPartida ? 'No encontramos la partida' : 'Sin señal'} icono={sinPartida ? 'search_off' : 'wifi_off'}>
-          {sinPartida
-            ? 'Este enlace no corresponde a ninguna partida abierta. Pídeselo otra vez a quien monta el juego.'
-            : 'No hay enlace con el centro de control. Acércate al Host y vuelve a cargar.'}
+          <span className="block mb-3">
+            {sinPartida
+              ? 'Este enlace no corresponde a ninguna partida abierta. Pídeselo otra vez a quien monta el juego.'
+              : 'No hay enlace con el centro de control. Acércate al Host y vuelve a cargar.'}
+          </span>
+          {sinPartida && <BotonSalir gameId={gameId} etiqueta="Salir de esta sesión" />}
         </Panel>
       </Marco>
     );
@@ -398,7 +403,11 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
     return (
       <Marco>
         <Panel titulo="Equipo no encontrado" icono="person_off">
-          El enlace apunta a un equipo que no pertenece a esta partida.
+          <span className="block mb-3">
+            El enlace apunta a un equipo que no pertenece a esta partida. Puede ser un enlace
+            viejo, de una partida anterior.
+          </span>
+          <BotonSalir gameId={state.gameId} etiqueta="Salir de esta sesión" />
         </Panel>
       </Marco>
     );
@@ -683,13 +692,37 @@ export default function PlayerPage({ params }: { params: { teamId: string } }) {
 
           {/* RESULTADOS */}
           {phase === 'resultados' && state && team && (
-            <Resultados
-              team={team}
-              fila={state.results?.ranking.find((r) => r.team.id === team.id) ?? null}
-              total={state.results?.ranking.length ?? null}
-              promedioEficiencia={state.results?.promedioEficiencia ?? null}
-              promedioConsumo={state.results?.promedioConsumoElectrico ?? null}
-            />
+            <>
+              <Resultados
+                team={team}
+                fila={state.results?.ranking.find((r) => r.team.id === team.id) ?? null}
+                total={state.results?.ranking.length ?? null}
+                promedioEficiencia={state.results?.promedioEficiencia ?? null}
+                promedioConsumo={state.results?.promedioConsumoElectrico ?? null}
+              />
+
+              {/*
+                Cierre de la sesión del dispositivo.
+                Sin esto, un celular que jugó esta partida seguía mostrando la mesa y el
+                marcador final aunque en el proyector ya hubiera otra partida: parecía que
+                «seguía dentro» y no había forma de soltarla desde la pantalla.
+              */}
+              <section className="rounded-xl bg-bg-surface border border-border-subtle p-5 flex flex-col gap-3 anim-fade">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[22px] text-accent-eficiencia">
+                    flag
+                  </span>
+                  <h2 className="font-headline-md text-headline-md font-bold uppercase">
+                    Partida terminada
+                  </h2>
+                </div>
+                <p className="font-body-sm text-body-sm text-text-secondary">
+                  Esta mesa queda cerrada en este celular. Para jugar otra partida, escanea el QR
+                  nuevo que muestre el proyector.
+                </p>
+                <BotonSalir gameId={state.gameId} />
+              </section>
+            </>
           )}
         </main>
       </div>
@@ -702,6 +735,38 @@ function Marco({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-bg-primary text-text-primary flex flex-col items-center justify-center px-6">
       <div className="w-full max-w-md flex flex-col gap-4">{children}</div>
     </div>
+  );
+}
+
+/**
+ * Suelta la partida en este dispositivo.
+ *
+ * Borra la identidad guardada de esta partida y, si el registro de partida activa apunta a
+ * ella, también ese registro. Es la salida del que abrió una sesión vieja: vuelve al portal
+ * para escanear el QR de la partida nueva.
+ */
+function BotonSalir({
+  gameId,
+  etiqueta = 'Volver al inicio',
+}: {
+  gameId: string | null;
+  etiqueta?: string;
+}) {
+  const router = useRouter();
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (gameId) {
+          clearMyTeam(gameId);
+          clearActiveGameIf(gameId);
+        }
+        router.push('/');
+      }}
+      className="h-12 rounded-xl bg-surface-container-high border border-border-subtle text-text-primary font-label-lg text-label-lg font-bold uppercase tracking-wider active:scale-95 transition-all"
+    >
+      {etiqueta}
+    </button>
   );
 }
 

@@ -54,6 +54,22 @@ export function clearActiveGame(): void {
   }
 }
 
+/**
+ * Borra el registro de partida activa solo si apunta a esta partida.
+ *
+ * El celular no toca la partida del proyector: si la partida guardada es otra (el operador
+ * acaba de crear una nueva en otro equipo), su registro se respeta.
+ */
+export function clearActiveGameIf(gameId: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (readActiveGame()?.gameId !== gameId) return;
+    window.localStorage.removeItem(KEY);
+  } catch {
+    /* ignorar */
+  }
+}
+
 /** Resuelve el id de partida: primero la URL, luego el último guardado. */
 export function resolveGameId(fromUrl: string | null): string | null {
   if (fromUrl && fromUrl.trim().length > 0) return fromUrl.trim();
